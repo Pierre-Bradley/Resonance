@@ -1,4 +1,4 @@
-# Secure Web Audio Player 
+# Secure Web Audio Player
 
 Un lecteur audio web moderne, combinant une interface utilisateur fluide (Flexbox) et une architecture robuste orientée sécurité.
 
@@ -13,5 +13,5 @@ Un lecteur audio web moderne, combinant une interface utilisateur fluide (Flexbo
 * **Veille des vulnérabilités** : Surveillance automatisée des dépendances (Dependabot).
 
 ## Installation et Utilisation
-1. Cloner le dépôt : `git clone https://github.com/TON-PSEUDO/NOM-DU-REPO.git`
-2. Ouvrir le fichier `index.html` dans un navigateur sécurisé.
+1. Cloner le dépôt
+2. Lancer l'app avec la commande 'python app.py'
