@@ -14,4 +14,4 @@ Un lecteur audio web moderne, combinant une interface utilisateur fluide (Flexbo
 
 ## Installation et Utilisation
 1. Cloner le dépôt
-2. Lancer l'app avec la commande 'python app.py'
+2. Lancer l'app avec la commande `python app.py`
