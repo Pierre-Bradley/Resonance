@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RESONANCE</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo1.png') }}">
     <link rel="manifest" href="/manifest.json">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -55,6 +56,28 @@
             overflow: hidden;
             position: relative;
         }
+
+        /* ===== CORRECTIFS RESPONSIVE DE BASE ===== */
+        html { overflow: hidden; }   /* interdit le decalage horizontal de toute la page */
+        .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .header-left h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .app-layout, .main-content { min-width: 0; }
+        .player-info, .player-controls, .player-extra { min-width: 0; }
+        .sidebar-backdrop { display: none; }
+        .menu-toggle {
+            display: none;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            width: 38px; height: 38px;
+            border-radius: 50%;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+        }
+        .menu-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
         .bg-artwork {
             position: fixed;
@@ -124,25 +147,20 @@
             gap: 10px;
             position: relative;
         }
-        .brand i {
-            color: var(--accent);
-            position: relative;
-            z-index: 2;
+         .brand-logo {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            object-fit: cover;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            flex-shrink: 0;
         }
-        .brand i.playing::before, .brand i.playing::after {
-            content: '';
-            position: absolute;
-            top: 50%; left: 50%;
-            width: 100%; height: 100%;
-            border-radius: 4px;
-            background: var(--accent);
-            transform: translate(-50%, -50%) scale(1);
-            z-index: -1;
-            animation: wave-pulse 2s ease-out infinite;
+        .brand-logo.playing {
+            animation: logo-pulse 2s ease-in-out infinite;
         }
-        .brand i.playing::after {
-            animation: wave-pulse-delayed 2s ease-out infinite;
-            animation-delay: 0.6s;
+        @keyframes logo-pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-glow); }
+            50%      { transform: scale(1.1); box-shadow: 0 0 0 10px transparent; }
         }
         .nav-section-title {
             font-size: 0.8rem;
@@ -752,8 +770,8 @@
             letter-spacing: 1px;
         }
         .eq-slider {
-            writing-mode: bt-lr;
-            -webkit-appearance: slider-vertical;
+            writing-mode: vertical-lr;
+            direction: rtl;
             width: 30px;
             height: 160px;
             accent-color: var(--accent);
@@ -848,11 +866,86 @@
         ::-webkit-scrollbar-thumb { background: var(--text-muted); opacity: 0.3; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
+        /* ===== RESPONSIVE ===== */
         @media (max-width: 1200px) {
             .sidebar { width: 240px; }
             .lyrics-panel, .queue-panel { width: 280px; }
             .header { padding: 20px 25px; }
             .playlist-view { padding: 15px 25px; }
+        }
+
+        @media (max-width: 1024px) {
+            .header { flex-wrap: wrap; row-gap: 10px; }
+            .header-controls { width: 100%; }
+            .search-bar { width: 180px; }
+            .search-bar:focus { width: 240px; }
+            .header h1 { font-size: 1.5rem; }
+            /* Panneaux paroles/file : superposition au-dessus du contenu */
+            .lyrics-panel, .queue-panel {
+                position: fixed;
+                top: 0; right: 0; bottom: 90px;
+                z-index: 60;
+                box-shadow: -8px 0 30px var(--shadow-color);
+            }
+        }
+
+        @media (max-width: 820px) {
+            .menu-toggle { display: flex; }
+            .header { padding: 15px 20px; }
+            /* Sidebar en tiroir */
+            .sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                width: 260px;
+                transform: translateX(-100%);
+                transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                z-index: 90;
+                background: var(--bg-color);
+            }
+            body.sidebar-open .sidebar { transform: translateX(0); box-shadow: 8px 0 30px var(--shadow-color); }
+            body.sidebar-open .sidebar-backdrop {
+                display: block;
+                position: fixed; inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 80;
+            }
+            #playlists-container { max-height: none !important; flex: 1; }
+            .online-badge { display: none; }
+            .control-buttons { gap: 12px; }
+            .player-info { width: auto; flex: 1; }
+            .player-controls { width: auto; flex: 0 0 auto; }
+            .player-extra { width: auto; flex: 0 0 auto; gap: 6px; }
+            .now-playing-time { display: none; }
+            .player-btn { padding: 6px 8px; }
+        }
+
+        @media (max-width: 600px) {
+            .header { padding: 12px 15px; }
+            .playlist-view { padding: 10px 15px; }
+            .song-row { padding: 10px 12px; }
+            .song-cover-thumb { width: 34px; height: 34px; margin-right: 8px; }
+            .song-meta { display: none; }
+            .search-type-select { display: none; }
+            .player-bar { height: 74px; padding: 8px 12px; }
+            body { padding-bottom: 74px; }
+            .lyrics-panel, .queue-panel { bottom: 74px; width: min(100vw, 350px); }
+            .volume-slider { width: 54px; }
+            .group-header { padding: 12px 12px 6px; }
+        }
+
+        /* EXPLORATION EN LIGNE */
+        .online-loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 1rem; }
+        .online-loading i { margin-right: 8px; color: var(--accent); }
+        .online-badge {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: var(--accent);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-right: 8px;
+            flex-shrink: 0;
         }
     </style>
 <base target="_blank">
@@ -871,9 +964,10 @@
     <div class="kb-hint" id="kb-hint"></div>
 
     <audio id="audio-player"></audio>
+    <div class="sidebar-backdrop" onclick="toggleSidebar()"></div>
 
     <aside class="sidebar">
-        <div class="brand"><i class="fas fa-wave-square" id="brand-icon"></i> RESONANCE</div>
+        <div class="brand"><img src="/static/img/logo1.png" class="brand-logo" id="brand-icon" alt="RESONANCE"> RESONANCE</div>
         <div class="nav-section-title">Bibliotheque</div>
         <div class="nav-item active" id="nav-all" onclick="changeView('all', 'Toutes les pistes')">
             <div class="nav-item-content"><i class="fas fa-music"></i> Toutes les pistes</div>
@@ -887,6 +981,9 @@
         <div class="nav-item" id="nav-albums" onclick="changeView('albums', 'Par Album')">
             <div class="nav-item-content"><i class="fas fa-compact-disc"></i> Par Album</div>
         </div>
+        <div class="nav-item" id="nav-online" onclick="changeView('online', 'Explorer en ligne')">
+            <div class="nav-item-content"><i class="fas fa-globe"></i> Explorer en ligne</div>
+        </div>
         <div class="nav-section-title">
             Playlists
             <i class="fas fa-plus" style="cursor: pointer; color: var(--accent);" onclick="openModal('create-playlist-modal')"></i>
@@ -897,7 +994,12 @@
     <div class="app-layout">
         <main class="main-content">
             <div class="header">
-                <h1 id="view-title">Toutes les pistes</h1>
+                <div class="header-left">
+                    <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()" title="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h1 id="view-title">Toutes les pistes</h1>
+                </div>
                 <div class="header-controls">
                     <div class="search-wrapper">
                         <i class="fas fa-search search-icon"></i>
@@ -1120,6 +1222,7 @@
         function handleSearch() {
             searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
             searchType = document.getElementById('search-type').value;
+            if (currentView === 'online') { doOnlineSearch(); return; }
             renderTracks();
         }
         function handleSort() {
@@ -1147,15 +1250,28 @@
         // =============================================================
         function changeView(viewType, title) {
             currentView = viewType;
+            document.body.classList.remove('sidebar-open');
             document.getElementById('view-title').textContent = title;
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             if (viewType === 'all') document.getElementById('nav-all').classList.add('active');
             else if (viewType === 'fav') document.getElementById('nav-fav').classList.add('active');
             else if (viewType === 'artists') document.getElementById('nav-artists').classList.add('active');
             else if (viewType === 'albums') document.getElementById('nav-albums').classList.add('active');
+            else if (viewType === 'online') document.getElementById('nav-online').classList.add('active');
             else {
                 const el = document.getElementById('nav-pl-' + viewType);
                 if (el) el.classList.add('active');
+            }
+            const isOnline = currentView === 'online';
+            document.getElementById('search-input').placeholder =
+                isOnline ? 'Rechercher sur Audius...' : 'Rechercher...';
+            // Correction de l'inversion : filtre et tri caches UNIQUEMENT en ligne
+            document.getElementById('search-type').style.display = isOnline ? 'none' : '';
+            document.getElementById('sort-select').style.display = isOnline ? 'none' : '';
+            if (isOnline) {
+                onlineSearched = false;
+                loadTrendingOnline();
+                return;
             }
             renderTracks();
         }
@@ -1186,6 +1302,7 @@
         // TRACKS RENDERING
         // =============================================================
         function renderTracks() {
+            if (currentView === 'online') return;
             trackList.innerHTML = '';
             let list = [];
             if (currentView === 'all') list = [...state.songs];
@@ -1217,6 +1334,7 @@
             });
         }
 
+        // Vue groupée (artistes/albums)
         function renderGroupedView(list, groupBy) {
             const groups = {};
             list.forEach(song => {
@@ -1374,6 +1492,9 @@
         }
         function toggleShuffle() { isShuffle = !isShuffle; document.getElementById('btn-shuffle').classList.toggle('active'); }
         function toggleRepeat() { isRepeat = !isRepeat; audioPlayer.loop = isRepeat; document.getElementById('btn-repeat').classList.toggle('active'); }
+        function toggleSidebar() {
+            document.body.classList.toggle('sidebar-open');
+        }
         function changeVolume() {
             const val = document.getElementById('volume-slider').value;
             audioPlayer.volume = val;
@@ -1794,6 +1915,195 @@
         initTheme();
         fetchData(true);
         setInterval(() => fetchData(false), 5000);
+
+        // =============================================================
+        // EXPLORATION EN LIGNE (Audius)
+        // =============================================================
+        var onlineResults = [];
+        var onlineSearched = false;
+        var onlineQuery = "";
+        var currentOnlineId = null;
+        var onlineSearchTimer = null;
+
+        function formatOnlineDuration(sec) {
+            if (!sec || sec <= 0) return '';
+            const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+            return m + ':' + (s < 10 ? '0' : '') + s;
+        }
+
+        function notifyOnline(msg, isError = false) {
+            const toast = document.getElementById('import-toast');
+            const titleEl = toast ? toast.querySelector('h4') : null;
+            const msgEl = document.getElementById('import-toast-msg');
+            if (!toast || !msgEl) return;
+            if (titleEl) {
+                titleEl.innerHTML = isError
+                    ? '<i class="fas fa-triangle-exclamation"></i> Erreur'
+                    : '<i class="fas fa-check-circle"></i> Import reussi';
+            }
+            msgEl.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 4500);
+        }
+
+        function onlineLoading(text) {
+            trackList.innerHTML =
+                '<div class="online-loading"><i class="fas fa-spinner fa-spin"></i>' +
+                escapeHtml(text) + '</div>';
+        }
+
+        function onlineError(text) {
+            trackList.innerHTML =
+                '<div class="online-loading" style="color:var(--danger);">' +
+                '<i class="fas fa-triangle-exclamation"></i>' + escapeHtml(text) + '</div>';
+        }
+
+        async function doOnlineSearch() {
+            const q = document.getElementById('search-input').value.trim();
+            clearTimeout(onlineSearchTimer);
+            if (!q) {
+                onlineSearchTimer = setTimeout(loadTrendingOnline, 450);
+                return;
+            }
+            onlineSearchTimer = setTimeout(() => runOnlineSearch(q), 450); // anti-spam keyup
+        }
+
+        async function runOnlineSearch(q) {
+            if (currentView !== 'online') return;
+            onlineQuery = q;
+            onlineSearched = true;
+            onlineLoading('Recherche de « ' + q + ' » sur Audius...');
+            try {
+                const res = await fetch('/api/search_online?q=' + encodeURIComponent(q));
+                const data = await res.json();
+                if (currentView !== 'online') return;
+                onlineResults = data.results || [];
+                if (!onlineResults.length) {
+                    trackList.innerHTML =
+                        '<div class="online-loading"><i class="fas fa-face-frown"></i>Aucun resultat pour « ' +
+                        escapeHtml(q) + ' »</div>';
+                    return;
+                }
+                renderOnlineResults();
+            } catch (e) {
+                if (currentView !== 'online') return;
+                onlineError('Erreur reseau pendant la recherche');
+            }
+        }
+
+        async function loadTrendingOnline() {
+            if (currentView !== 'online') return;
+            onlineQuery = "";
+            onlineSearched = false;
+            onlineLoading('Chargement des tendances Audius...');
+            try {
+                const res = await fetch('/api/trending_online');
+                const data = await res.json();
+                if (currentView !== 'online') return;
+                if (data.error) throw new Error(data.error);
+                onlineResults = data.results || [];
+                renderOnlineResults();
+            } catch (e) {
+                if (currentView !== 'online') return;
+                onlineError(e.message || 'Audius injoignable');
+            }
+        }
+
+        function renderOnlineResults() {
+            trackList.innerHTML = '';
+            const head = document.createElement('div');
+            head.className = 'group-header';
+            head.innerHTML = onlineSearched
+                ? '<i class="fas fa-magnifying-glass"></i><h3>' + escapeHtml(onlineQuery) + '</h3><span>' +
+                onlineResults.length + ' resultat' + (onlineResults.length > 1 ? 's' : '') + '</span>'
+                : '<i class="fas fa-fire"></i><h3>Tendances Audius</h3><span>' +
+                onlineResults.length + ' titre' + (onlineResults.length > 1 ? 's' : '') + ' libres</span>';
+            trackList.appendChild(head);
+
+            onlineResults.forEach((r, idx) => {
+                const row = document.createElement('div');
+                row.className = 'song-row' + (r.id === currentOnlineId ? ' playing' : '');
+                row.id = 'online-row-' + r.id;
+                row.style.animationDelay = Math.min(idx * 0.03, 0.5) + 's';
+
+                const art = r.artwork
+                    ? '<img class="song-cover-thumb" src="' + escapeHtml(r.artwork) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
+                    : '<div class="song-cover-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);"><i class="fas fa-music"></i></div>';
+
+                const meta = [r.artist, r.genre, formatOnlineDuration(r.duration)].filter(Boolean).join(' • ');
+
+                row.innerHTML =
+                    art +
+                    '<button class="song-play-btn" title="Ecouter"><i class="fas fa-play"></i></button>' +
+                    '<div class="song-info" title="' + escapeHtml(r.title) + '">' +
+                        '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(r.title) + '</div>' +
+                        '<div class="song-meta" style="margin-left:0;">' + escapeHtml(meta) + '</div>' +
+                    '</div>' +
+                    '<span class="online-badge">En ligne</span>' +
+                    '<div class="song-actions">' +
+                        '<button class="action-btn" id="dl-' + r.id + '" title="Telecharger dans ~/Musique/Musiques/"><i class="fas fa-download"></i></button>' +
+                    '</div>';
+
+                const play = () => playOnline(r);
+                row.querySelector('.song-play-btn').addEventListener('click', play);
+                row.querySelector('.song-info').addEventListener('click', play);
+                row.querySelector('#dl-' + r.id).addEventListener('click', () => downloadOnlineTrack(r));
+                trackList.appendChild(row);
+            });
+        }
+
+        function playOnline(r) {
+            currentOnlineId = r.id;
+            audioPlayer.src = '/api/stream_online/' + encodeURIComponent(r.id);
+            audioPlayer.play().catch(err => console.error('Lecture impossible :', err));
+
+            document.getElementById('now-playing-title').textContent = r.title;
+            document.getElementById('now-playing-artist').textContent = r.artist + ' • En ligne';
+            document.getElementById('now-playing-time').textContent = 'Chargement...';
+
+            const coverImg = document.getElementById('player-cover');
+            const coverEmpty = document.getElementById('player-cover-empty');
+            if (r.artwork) {
+                coverImg.src = r.artwork;
+                coverImg.style.display = 'block';
+                coverEmpty.style.display = 'none';
+            } else {
+                coverImg.style.display = 'none';
+                coverEmpty.style.display = 'flex';
+            }
+
+            document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
+            const row = document.getElementById('online-row-' + r.id);
+            if (row) row.classList.add('playing');
+        }
+
+        async function downloadOnlineTrack(r) {
+            const btn = document.getElementById('dl-' + r.id);
+            if (!btn || btn.disabled) return;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            try {
+                const res = await fetch('/api/download_online', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: r.id, title: r.title, artist: r.artist, artwork: r.artwork })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    btn.innerHTML = '<i class="fas fa-check" style="color:var(--accent)"></i>';
+                    notifyOnline('Telecharge : ' + (data.file || r.title));
+                    fetchData(true);  // la piste apparait dans la bibliotheque locale
+                } else {
+                    btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
+                    btn.disabled = false;
+                    notifyOnline('Echec : ' + (data.error || 'erreur inconnue'), true);
+                }
+            } catch (e) {
+                btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
+                btn.disabled = false;
+                notifyOnline('Erreur reseau pendant le telechargement', true);
+            }
+        }        
     </script>
 </body>
 </html>

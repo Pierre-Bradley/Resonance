@@ -1,8 +1,9 @@
+import re
 import os
 import sqlite3
 import requests
 import base64
-from flask import Flask, render_template, jsonify, send_file, request, Response
+from flask import Flask, render_template, jsonify, send_file, request, Response, stream_with_context
 from werkzeug.utils import secure_filename
 
 # =============================================================================
@@ -28,6 +29,14 @@ app = Flask(__name__)
 MUSIC_DIR = os.path.join(os.path.expanduser('~'), 'Musique')
 DB_FILE = 'resonance.db'
 OLD_DATA_FILE = 'resonance_data.json'
+
+ICONS = [
+    {
+        "src": "/static/img/logo.png",
+        "sizes": "512x512",
+        "type": "image/png"
+    }
+]
 
 # =============================================================================
 # PATH TRAVERSAL PROTECTION
@@ -393,47 +402,49 @@ MANIFEST = {
 }
 
 SW_CODE = """
-const CACHE_NAME = 'resonance-v1';
+const CACHE_NAME = 'resonance-v4';
 const STATIC_URLS = ['/'];
 
 self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_URLS))
-    );
+    event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_URLS)));
     self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(self.clients.claim());
+    event.waitUntil(
+        caches.keys().then((keys) =>
+            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+        ).then(() => self.clients.claim())
+    );
 });
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
-    // Cache covers and streams for offline playback
+    if (event.request.method !== 'GET') return;
+
+    // Couvertures + streams locaux : cache-first (ecoute hors-ligne)
     if (url.pathname.startsWith('/api/cover/') || url.pathname.startsWith('/stream/')) {
         event.respondWith(
-            caches.match(event.request).then((cached) => {
-                if (cached) return cached;
-                return fetch(event.request).then((networkResponse) => {
-                    const clone = networkResponse.clone();
+            caches.match(event.request).then((cached) => cached || fetch(event.request).then((resp) => {
+                if (resp.status === 200) {
+                    const clone = resp.clone();
                     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-                    return networkResponse;
-                });
-            })
+                }
+                return resp;
+            }))
         );
         return;
     }
-    // Network-first for API state
+    // Etat de l'app : reseau d'abord
     if (url.pathname === '/api/state') {
-        event.respondWith(
-            fetch(event.request).catch(() => caches.match(event.request))
-        );
+        event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
         return;
     }
-    // Cache-first for static assets
-    event.respondWith(
-        caches.match(event.request).then((cached) => cached || fetch(event.request))
-    );
+    // Autres API (recherche/stream en ligne...) : ne pas intercepter
+    if (url.pathname.startsWith('/api/')) return;
+
+    // Page et statique : cache-first
+    event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });
 """
 
@@ -611,6 +622,255 @@ def update_metadata():
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Format non supporte pour l'ecriture"}), 400
 
+# =============================================================================
+# EXPLORATION EN LIGNE (AUDIUS — musique libre, publiee par les artistes)
+# =============================================================================
+
+ONLINE_DOWNLOAD_DIR = os.path.join(os.path.expanduser('~'), 'Musique', 'Musiques')
+AUDIUS_APP_NAME = 'RESONANCE'
+_audius_host = None
+
+
+def get_audius_host():
+    """Trouve un serveur d'API Audius operationnel (mis en cache)."""
+    global _audius_host
+    if _audius_host:
+        return _audius_host
+    try:
+        r = requests.get('https://api.audius.co', timeout=6)
+        for host in r.json().get('data', []):
+            try:
+                test = requests.get(
+                    f"{host}/v1/tracks/trending",
+                    params={'app_name': AUDIUS_APP_NAME, 'limit': 1},
+                    timeout=6
+                )
+                if test.status_code == 200:
+                    _audius_host = host
+                    return _audius_host
+            except requests.RequestException:
+                continue
+    except (requests.RequestException, ValueError):
+        pass
+    _audius_host = 'https://discoveryprovider.audius.co'
+    return _audius_host
+
+
+def _shape_tracks(tracks):
+    results = []
+    for t in tracks:
+        if t.get('is_streamable') is False:
+            continue
+        art = t.get('artwork') or {}
+        results.append({
+            'id': t.get('id') or '',
+            'title': t.get('title') or 'Sans titre',
+            'artist': (t.get('user') or {}).get('name') or 'Artiste inconnu',
+            'duration': int(t.get('duration') or 0),
+            'artwork': art.get('480x480') or art.get('150x150') or art.get('1000x1000') or '',
+            'genre': t.get('genre') or '',
+            'downloadable': bool(t.get('downloadable')),
+        })
+    return results
+
+
+@app.route('/api/search_online')
+def search_online():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({"results": []})
+    try:
+        host = get_audius_host()
+        r = requests.get(
+            f"{host}/v1/tracks/search",
+            params={'query': query, 'app_name': AUDIUS_APP_NAME, 'limit': 100},
+            timeout=12
+        )
+        r.raise_for_status()
+        return jsonify({"results": _shape_tracks(r.json().get('data', []))})
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"results": [], "error": f"Recherche impossible : {e}"}), 502
+
+
+@app.route('/api/trending_online')
+def trending_online():
+    try:
+        host = get_audius_host()
+        r = requests.get(
+            f"{host}/v1/tracks/trending",
+            params={'app_name': AUDIUS_APP_NAME, 'limit': 100},
+            timeout=12
+        )
+        r.raise_for_status()
+        return jsonify({"results": _shape_tracks(r.json().get('data', []))})
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"results": [], "error": f"Reseau indisponible : {e}"}), 502
+
+
+@app.route('/api/stream_online/<track_id>')
+def stream_online(track_id):
+    """Proxy du flux Audius : same-origin => pas de blocage CORS,
+    l'egaliseur (Web Audio) et le seek fonctionnent."""
+    if not re.match(r'^[A-Za-z0-9_-]{1,64}$', track_id):
+        return jsonify({"error": "ID invalide"}), 400
+
+    req_headers = {'User-Agent': 'Mozilla/5.0'}
+    range_header = request.headers.get('Range')
+    if range_header:
+        req_headers['Range'] = range_header
+
+    try:
+        host = get_audius_host()
+        upstream = requests.get(
+            f"{host}/v1/tracks/{track_id}/stream",
+            params={'app_name': AUDIUS_APP_NAME},
+            headers=req_headers,
+            stream=True, allow_redirects=True, timeout=30
+        )
+    except requests.RequestException:
+        return jsonify({"error": "Flux indisponible"}), 502
+
+    if upstream.status_code not in (200, 206):
+        upstream.close()
+        return jsonify({"error": "Flux indisponible"}), 502
+
+    resp_headers = {}
+    for h in ('Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if h in upstream.headers:
+            resp_headers[h] = upstream.headers[h]
+    resp_headers.setdefault('Content-Type', 'audio/mp4')
+    resp_headers.setdefault('Accept-Ranges', 'bytes')
+
+    def relay():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return Response(
+        stream_with_context(relay()),
+        status=upstream.status_code,
+        headers=resp_headers,
+    )
+
+
+def _unique_dest(directory, base, ext):
+    dest = os.path.join(directory, base + ext)
+    counter = 1
+    while os.path.exists(dest):
+        dest = os.path.join(directory, f"{base}_{counter}{ext}")
+        counter += 1
+    return dest
+
+
+def _tag_downloaded_file(path, title, artist, artwork_bytes=None):
+    """Ecrit titre/artiste (+ pochette integree) dans le fichier telecharge."""
+    if not MUTAGEN_AVAILABLE:
+        return
+    try:
+        audio = MP3(path)
+        if audio.tags is None:
+            audio.add_tags()
+        audio.tags["TIT2"] = TIT2(encoding=3, text=title)
+        audio.tags["TPE1"] = TPE1(encoding=3, text=artist)
+        if artwork_bytes:
+            audio.tags.add(APIC(encoding=3, mime='image/jpeg', type=3,
+                                desc='Cover', data=artwork_bytes))
+        audio.save()
+    except Exception:
+        try:
+            from mutagen.mp4 import MP4Cover
+            audio = MP4(path)
+            if audio.tags is None:
+                audio.add_tags()
+            audio["\xa9nam"] = [title]
+            audio["\xa9ART"] = [artist]
+            if artwork_bytes:
+                audio["covr"] = [MP4Cover(artwork_bytes,
+                                          imageformat=MP4Cover.FORMAT_JPEG)]
+            audio.save()
+        except Exception:
+            pass
+
+
+@app.route('/api/download_online', methods=['POST'])
+def download_online():
+    data = request.json or {}
+    track_id = (data.get('id') or '').strip()
+    title = (data.get('title') or 'sans titre').strip()
+    artist = (data.get('artist') or 'artiste inconnu').strip()
+    artwork_url = data.get('artwork') or ''
+
+    if not re.match(r'^[A-Za-z0-9_-]{1,64}$', track_id):
+        return jsonify({"success": False, "error": "ID invalide"}), 400
+
+    os.makedirs(ONLINE_DOWNLOAD_DIR, exist_ok=True)
+
+    try:
+        host = get_audius_host()
+
+        # Pochette (pour l'integrer dans le fichier)
+        artwork_bytes = None
+        if artwork_url:
+            try:
+                ar = requests.get(artwork_url, timeout=10)
+                if ar.status_code == 200:
+                    artwork_bytes = ar.content
+            except requests.RequestException:
+                pass
+
+        # 1) Fichier de telechargement officiel si l'artiste l'autorise
+        download_url, ext = None, '.mp3'
+        try:
+            meta = requests.get(
+                f"{host}/v1/tracks/{track_id}",
+                params={'app_name': AUDIUS_APP_NAME}, timeout=10
+            ).json().get('data') or {}
+            if meta.get('downloadable'):
+                durls = meta.get('download_urls') or {}
+                for key, candidate_ext in (('mp3', '.mp3'), ('aac', '.m4a'), ('wav', '.wav')):
+                    if durls.get(key):
+                        download_url, ext = durls[key], candidate_ext
+                        break
+        except (requests.RequestException, ValueError):
+            pass
+
+        if download_url:
+            r = requests.get(download_url, stream=True, timeout=30)
+        else:
+            # 2) Sinon : enregistrement du flux public diffuse par Audius
+            r = requests.get(
+                f"{host}/v1/tracks/{track_id}/stream",
+                params={'app_name': AUDIUS_APP_NAME},
+                stream=True, allow_redirects=True, timeout=30
+            )
+            ctype = r.headers.get('Content-Type', '')
+            ext = '.m4a' if ('mp4' in ctype or 'aac' in ctype) else '.mp3'
+        r.raise_for_status()
+
+        base = secure_filename(f"{artist} - {title}") or f"piste_{track_id[:8]}"
+        dest = _unique_dest(ONLINE_DOWNLOAD_DIR, base, ext)
+        with open(dest, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    f.write(chunk)
+        r.close()
+
+        _tag_downloaded_file(dest, title, artist, artwork_bytes)
+
+        rel_path = os.path.relpath(dest, MUSIC_DIR).replace('\\', '/')
+        return jsonify({
+            "success": True,
+            "file": os.path.basename(dest),
+            "library_path": rel_path,
+            "dir": ONLINE_DOWNLOAD_DIR
+        })
+    except requests.RequestException as e:
+        return jsonify({"success": False, "error": f"Telechargement impossible : {e}"}), 502
+    except OSError as e:
+        return jsonify({"success": False, "error": f"Erreur disque : {e}"}), 500
 
 # =============================================================================
 # LANCEMENT
