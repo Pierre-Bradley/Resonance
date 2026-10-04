@@ -30,14 +30,6 @@ MUSIC_DIR = os.path.join(os.path.expanduser('~'), 'Musique')
 DB_FILE = 'resonance.db'
 OLD_DATA_FILE = 'resonance_data.json'
 
-ICONS = [
-    {
-        "src": "/static/img/logo.png",
-        "sizes": "512x512",
-        "type": "image/png"
-    }
-]
-
 # =============================================================================
 # PATH TRAVERSAL PROTECTION
 # =============================================================================
@@ -390,19 +382,15 @@ MANIFEST = {
     "short_name": "RESONANCE",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#0f172a",
-    "theme_color": "#6366f1",
+    "background_color": "#0a0e1a",
+    "theme_color": "#c9a227",
     "icons": [
-        {
-            "src": "data:image/svg+xml;base64," + base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect fill="#6366f1" width="512" height="512"/><path fill="white" d="M256 80c-97.2 0-176 78.8-176 176s78.8 176 176 176 176-78.8 176-176S353.2 80 256 80zm-32 240V192l96 64-96 64z"/></svg>').decode(),
-            "sizes": "512x512",
-            "type": "image/svg+xml"
-        }
+        {"src": "/static/img/logo1.png", "sizes": "512x512", "type": "image/png"}
     ]
 }
 
 SW_CODE = """
-const CACHE_NAME = 'resonance-v4';
+const CACHE_NAME = 'resonance-v5';
 const STATIC_URLS = ['/'];
 
 self.addEventListener('install', (event) => {

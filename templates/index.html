@@ -2,34 +2,41 @@
 <html lang="fr" data-theme="dark">
 <head>
     <meta charset="UTF-8">
+    <meta name="theme-color" content="#0a0e1a">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RESONANCE</title>
+    <link rel="apple-touch-icon" href="/static/img/logo1.png">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo1.png') }}">
     <link rel="manifest" href="/manifest.json">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-color: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.85);
-            --accent: #6366f1;
-            --accent-hover: #4f46e5;
-            --accent-glow: rgba(99, 102, 241, 0.3);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --border: rgba(255, 255, 255, 0.1);
+            --bg-color: #0a0e1a;
+            --accent: #d4af37;            /* or, harmonise avec le logo */
+            --accent-hover: #e6c35c;
+            --accent-glow: rgba(212, 175, 55, 0.35);
+            --text-main: #f4f6fb;
+            --text-muted: #9aa5b8;
+            --border: rgba(255, 255, 255, 0.12);
             --danger: #ef4444;
-            --row-bg: rgba(30, 41, 59, 0.3);
-            --row-hover: rgba(30, 41, 59, 0.8);
-            --input-bg: rgba(0, 0, 0, 0.3);
-            --shadow-color: rgba(0, 0, 0, 0.4);
+            --row-bg: rgba(255, 255, 255, 0.045);
+            --row-hover: rgba(255, 255, 255, 0.09);
+            --input-bg: rgba(0, 0, 0, 0.25);
+            --shadow-color: rgba(0, 0, 0, 0.5);
             --bg-artwork-opacity: 0.15;
+            --sticky-bg: rgba(10, 14, 26, 0.72);
+            /* Liquid glass */
+            --glass-bg: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03));
+            --glass-border: rgba(255, 255, 255, 0.16);
+            --glass-highlight: rgba(255, 255, 255, 0.35);
+            --glass-blur: 24px;
+            --glass-fallback: rgba(18, 24, 40, 0.97);
         }
         [data-theme="light"] {
-            --bg-color: #f1f5f9;
-            --panel-bg: rgba(255, 255, 255, 0.85);
-            --accent: #6366f1;
-            --accent-hover: #4f46e5;
-            --accent-glow: rgba(99, 102, 241, 0.2);
+            --bg-color: #eef1f7;
+            --accent: #a17d17;
+            --accent-hover: #8a6a12;
+            --accent-glow: rgba(161, 125, 23, 0.25);
             --text-main: #1e293b;
             --text-muted: #64748b;
             --border: rgba(0, 0, 0, 0.08);
@@ -39,6 +46,13 @@
             --input-bg: rgba(0, 0, 0, 0.05);
             --shadow-color: rgba(0, 0, 0, 0.1);
             --bg-artwork-opacity: 0.08;
+            --sticky-bg: rgba(238, 241, 247, 0.8);
+            /* Liquid glass */
+            --glass-bg: linear-gradient(135deg, rgba(255,255,255,0.65), rgba(255,255,255,0.35));
+            --glass-border: rgba(255, 255, 255, 0.7);
+            --glass-highlight: rgba(255, 255, 255, 0.95);
+            --glass-blur: 24px;
+            --glass-fallback: rgba(255, 255, 255, 0.97);
         }
         * {
             box-sizing: border-box;
@@ -933,6 +947,127 @@
             .group-header { padding: 12px 12px 6px; }
         }
 
+        /* ============================================================
+        LIQUID GLASS — materiaux translucides, reflets speculaires
+        ============================================================ */
+
+        /* Profondeur d'arriere-plan : le verre a quelque chose a refracter */
+        body {
+            background:
+                radial-gradient(1200px 600px at 80% -10%, rgba(79, 70, 229, 0.10), transparent 60%),
+                radial-gradient(900px 500px at -10% 110%, rgba(212, 175, 55, 0.08), transparent 60%),
+                var(--bg-color);
+        }
+        .ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+        .ambient span {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.30;
+            animation: orb-float 26s ease-in-out infinite;
+        }
+        .ambient .o1 { width: 44vw; height: 44vw; background: #d4af37; top: -18%; left: -12%; }
+        .ambient .o2 { width: 38vw; height: 38vw; background: #4f46e5; bottom: -20%; right: -10%; animation-delay: -8s; }
+        .ambient .o3 { width: 30vw; height: 30vw; background: #0ea5e9; top: 35%; left: 55%; opacity: 0.18; animation-delay: -16s; }
+        [data-theme="light"] .ambient span { opacity: 0.16; }
+        @keyframes orb-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33%      { transform: translate(4vw, 3vh) scale(1.08); }
+            66%      { transform: translate(-3vw, -2vh) scale(0.95); }
+        }
+
+        /* Materiau verre : panneaux principaux */
+        .sidebar, .player-bar, .lyrics-panel, .queue-panel, .modal,
+        .import-toast, .kb-hint {
+            background: var(--glass-bg);
+            -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+            backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+            border: 1px solid var(--glass-border);
+            box-shadow:
+                inset 0 1px 0 var(--glass-highlight),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+                0 24px 60px var(--shadow-color);
+        }
+        /* Arete speculaire : ligne de lumiere en haut de chaque panneau */
+        .sidebar::before, .player-bar::before, .lyrics-panel::before,
+        .queue-panel::before, .modal::before, .import-toast::before, .kb-hint::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 14%; right: 14%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--glass-highlight), transparent);
+            pointer-events: none;
+            z-index: 1;
+        }
+        .modal { position: relative; }   /* requis pour son ::before */
+
+        /* Header et en-tetes de groupe : verre leger */
+        .header {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
+            -webkit-backdrop-filter: blur(14px) saturate(140%);
+            backdrop-filter: blur(14px) saturate(140%);
+        }
+        [data-theme="light"] .header {
+            background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.2));
+        }
+        .group-header {
+            background: var(--sticky-bg);
+            -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        /* Controles : verre tactile */
+        .search-bar, .search-type-select, .sort-select,
+        .modal input, .modal select, .player-btn,
+        .theme-toggle, .menu-toggle, .eq-value, .queue-count {
+            border: 1px solid var(--glass-border) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.18);
+        }
+
+        /* Reflet "liquide" qui suit le curseur sur les lignes */
+        .song-row, .queue-item { position: relative; overflow: hidden; }
+        .song-row::after, .queue-item::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%),
+                        rgba(255, 255, 255, 0.10), transparent 65%);
+            opacity: 0;
+            transition: opacity 0.35s ease;
+            pointer-events: none;
+        }
+        .song-row:hover::after, .queue-item:hover::after { opacity: 1; }
+
+        /* Marque : typographie doree, echo du logo */
+        .brand {
+            background: linear-gradient(115deg, #f7ecc8 0%, #e3c25a 35%, #b98f22 70%, #f1d98a 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        [data-theme="light"] .brand {
+            background: linear-gradient(115deg, #8a6d1f, #b8912c 60%, #8a6d1f);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+        .brand-logo {
+            border-radius: 10px;
+            box-shadow: 0 0 0 1px var(--glass-border), 0 6px 20px rgba(212, 175, 55, 0.28);
+        }
+
+        /* Fallback navigateurs sans backdrop-filter */
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+            .sidebar, .player-bar, .lyrics-panel, .queue-panel, .modal, .import-toast, .kb-hint {
+                background: var(--glass-fallback);
+            }
+        }
+        /* Accessibilite : mouvement reduit */
+        @media (prefers-reduced-motion: reduce) {
+            .ambient span { animation: none; }
+            .brand-logo.playing, .player-cover, .song-row, .queue-item { animation: none !important; }
+        }
         /* EXPLORATION EN LIGNE */
         .online-loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 1rem; }
         .online-loading i { margin-right: 8px; color: var(--accent); }
@@ -951,6 +1086,9 @@
 <base target="_blank">
 </head>
 <body>
+    <div class="ambient">
+        <span class="o1"></span><span class="o2"></span><span class="o3"></span>
+    </div>
     <div class="bg-artwork" id="bg-artwork"></div>
     <div class="drop-overlay" id="drop-overlay">
         <i class="fas fa-cloud-upload-alt"></i>
@@ -2103,7 +2241,21 @@
                 btn.disabled = false;
                 notifyOnline('Erreur reseau pendant le telechargement', true);
             }
-        }        
+        }
+        
+        // =============================================================
+        // LIQUID GLASS — reflet suivant le curseur
+        // =============================================================
+        (function () {
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            document.addEventListener('pointermove', (e) => {
+                const el = e.target.closest ? e.target.closest('.song-row, .queue-item') : null;
+                if (!el) return;
+                const r = el.getBoundingClientRect();
+                el.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+                el.style.setProperty('--my', (e.clientY - r.top) + 'px');
+            }, { passive: true });
+        })();
     </script>
 </body>
 </html>
