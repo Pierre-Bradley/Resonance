@@ -472,6 +472,46 @@
             text-align: center;
             animation: fadeInUp 0.5s ease 0.1s both;
         }
+        /* Paroles synchronisees : une ligne par timestamp */
+        .lyrics-content .lyr-line {
+            padding: 5px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: color 0.3s ease, transform 0.3s ease, background 0.3s ease;
+            white-space: normal;
+            text-align: center;
+        }
+        .lyrics-content .lyr-line:hover { color: var(--text-main); background: var(--input-bg); }
+        .lyrics-content .lyr-line.active {
+            color: var(--accent);
+            font-weight: 600;
+            transform: scale(1.04);
+        }
+        #lyrics-sync-btn.active { color: var(--accent); }
+
+        /* MODALE CLIP */
+        .clip-modal { width: 640px; max-width: 95vw; }
+        .clip-stage {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .clip-stage video { width: 100%; height: 100%; object-fit: contain; display: none; }
+        .clip-stage video.active { display: block; }
+        .clip-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .clip-fallback {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 20px;
+        }
+        .clip-fallback i { font-size: 3rem; display: block; margin-bottom: 10px; }
+        .clip-status { text-align: center; margin-top: 10px; min-height: 1.2em; }
+        .clip-status i { margin-right: 6px; }
 
         /* QUEUE PANEL */
         .queue-panel {
@@ -1238,6 +1278,12 @@
                         <option value="za">De Z a A</option>
                         <option value="newest">Ajouts Recents</option>
                     </select>
+                    <button class="theme-toggle" id="refresh-library-btn" onclick="refreshLibrary()" title="Actualiser la bibliotheque (rescanner le dossier de musique)">
+                        <i class="fas fa-rotate-right" id="refresh-library-icon"></i>
+                    </button>
+                    <button class="theme-toggle" id="library-dir-btn" onclick="showLibraryDir()" title="Dossier de musique surveille par le serveur">
+                        <i class="fas fa-folder-open"></i>
+                    </button>
                     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Basculer le theme">
                         <i class="fas fa-sun" id="theme-icon"></i>
                     </button>
@@ -1249,7 +1295,12 @@
         <aside class="lyrics-panel hidden" id="lyrics-panel">
             <div class="lyrics-header">
                 <h3 id="lyrics-song-title">Paroles</h3>
-                <button class="action-btn" onclick="toggleLyricsPanel()"><i class="fas fa-times"></i></button>
+                <div style="display:flex;gap:4px;">
+                    <button class="action-btn" id="lyrics-sync-btn" onclick="toggleLyricsSync()" title="Synchronisation auto avec la lecture">
+                        <i class="fas fa-closed-captioning"></i>
+                    </button>
+                    <button class="action-btn" onclick="toggleLyricsPanel()"><i class="fas fa-times"></i></button>
+                </div>
             </div>
             <div class="lyrics-content" id="lyrics-text">Chargement des paroles...</div>
         </aside>
@@ -1292,8 +1343,11 @@
             <button class="player-btn" id="eq-btn" onclick="openModal('equalizer-modal')">
                 <i class="fas fa-sliders-h"></i> EQ
             </button>
-            <button class="player-btn" id="lyrics-btn" onclick="toggleLyricsPanel()">
+            <button class="player-btn" id="lyrics-btn" onclick="toggleLyricsPanel()" title="Paroles">
                 <i class="fas fa-microphone-alt"></i>
+            </button>
+            <button class="player-btn" id="clip-btn" onclick="openClipModal()" title="Voir le clip (ou la pochette)">
+                <i class="fas fa-film"></i>
             </button>
             <i class="fas fa-volume-up" id="volume-icon"></i>
             <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.01" value="1" oninput="changeVolume()">
@@ -1370,6 +1424,25 @@
             <div class="modal-btns">
                 <button class="btn btn-cancel" onclick="closeModal('metadata-modal')">Annuler</button>
                 <button class="btn btn-primary" onclick="submitMetadata()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CLIP VIDEO : video relayee par votre serveur, sinon la pochette -->
+    <div class="modal-overlay" id="clip-modal" onclick="if (event.target === this) closeClipModal()">
+        <div class="modal clip-modal">
+            <h3><i class="fas fa-film"></i> <span id="clip-title">Clip</span></h3>
+            <div class="clip-stage" id="clip-stage">
+                <video id="clip-video" controls playsinline></video>
+                <img id="clip-cover" alt="Pochette" style="display:none;">
+                <div class="clip-fallback" id="clip-fallback" style="display:none;">
+                    <i class="fas fa-compact-disc"></i>
+                    <p>Pas de clip disponible : voici la pochette.</p>
+                </div>
+            </div>
+            <div class="clip-status" id="clip-status"></div>
+            <div class="modal-btns">
+                <button class="btn btn-cancel" onclick="closeClipModal()">Fermer</button>
             </div>
         </div>
     </div>
@@ -1488,6 +1561,8 @@
             // Correction de l'inversion : filtre et tri caches UNIQUEMENT en ligne
             document.getElementById('search-type').style.display = isOnline ? 'none' : '';
             document.getElementById('sort-select').style.display = isOnline ? 'none' : '';
+            document.getElementById('refresh-library-btn').style.display = isOnline ? 'none' : '';
+            document.getElementById('library-dir-btn').style.display = isOnline ? 'none' : '';
             document.getElementById('source-toggle').style.display = isOnline ? 'flex' : 'none';
             if (isOnline) {
                 onlineSearched = false;
@@ -1749,6 +1824,7 @@
                 const fmt = (secs) => Math.floor(secs / 60) + ':' + Math.floor(secs % 60).toString().padStart(2, '0');
                 document.getElementById('now-playing-time').innerText = fmt(audioPlayer.currentTime) + ' / ' + fmt(audioPlayer.duration);
             }
+            if (lyricsVisible && lyricsLines.length) updateLyricsHighlight(true);
         });
         audioPlayer.addEventListener('play', () => { updateWaveAnimation(); updatePlayBtnUI(); });
         audioPlayer.addEventListener('pause', () => { updateWaveAnimation(); updatePlayBtnUI(); });
@@ -2055,26 +2131,209 @@
         // =============================================================
         // LYRICS
         // =============================================================
+        // PAROLES (LRCLIB via serveur, synchronisées avec la lecture)
+        // =============================================================
+        let lyricsLines = [];        // [{t: secondes, text: ligne}]
+        let lyricsSyncOn = true;
+        let lyricsReqId = 0;
+
+        function setLyricsStatus(text) {
+            document.getElementById('lyrics-text').textContent = text;
+            document.getElementById('lyrics-song-title').textContent =
+                (currentPlayingArtist && currentPlayingArtist !== '—' ? currentPlayingArtist + ' - ' : '') + (currentPlayingName || 'Paroles');
+        }
+
         async function fetchLyrics(songName) {
-            document.getElementById('lyrics-text').textContent = "Recherche des paroles en cours...";
-            document.getElementById('lyrics-song-title').textContent = songName;
+            const reqId = ++lyricsReqId;
+            setLyricsStatus('Recherche des paroles en cours...');
+            // Titre + artiste (+ id YouTube si connu) : la recherche cible la
+            // vraie chanson, pas le nom de fichier.
+            const song = state.songs.find(s => s.path === currentPlayingPath);
+            const body = {
+                name: songName,
+                title: songName,
+                artist: currentPlayingArtist && currentPlayingArtist !== '—' ? currentPlayingArtist : (song ? song.artist : ''),
+                duration: song ? song.duration : 0,
+                path: song ? song.path : ''
+            };
             try {
                 const res = await fetch('/api/lyrics', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: songName })
+                    body: JSON.stringify(body)
                 });
                 const data = await res.json();
+                if (reqId !== lyricsReqId) return;   // une autre piste a ete lancee entre-temps
                 if (data.success) {
-                    document.getElementById('lyrics-text').textContent = data.lyrics;
-                    document.getElementById('lyrics-song-title').textContent = data.artist + ' - ' + data.track;
+                    document.getElementById('lyrics-song-title').textContent =
+                        (data.artist ? data.artist + ' - ' : '') + (data.track || songName);
+                    renderLyrics(data.synced, data.plain);
                 } else {
-                    document.getElementById('lyrics-text').textContent = "Aucune parole trouvee.";
+                    lyricsLines = [];
+                    setLyricsStatus(data.error || 'Aucune parole trouvee.');
                 }
             } catch (e) {
-                document.getElementById('lyrics-text').textContent = "Erreur de chargement.";
+                lyricsLines = [];
+                setLyricsStatus('Erreur de chargement des paroles.');
             }
         }
+
+        // Convertit "…[mm:ss.xx]texte" en lignes horodatees.
+        function parseLrc(lrc) {
+            const lines = [];
+            const re = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+            for (const raw of (lrc || '').split(/\r?\n/)) {
+                let lastEnd = 0, timestamps = [];
+                let m;
+                re.lastIndex = 0;
+                while ((m = re.exec(raw)) !== null) {
+                    timestamps.push((parseInt(m[1]) * 60) + parseInt(m[2]) +
+                        (m[3] ? parseFloat('0.' + m[3]) : 0));
+                    lastEnd = re.lastIndex;
+                }
+                const text = raw.slice(lastEnd).trim() || raw.replace(re, '').trim();
+                if (!timestamps.length) { if (text) lines.push({ t: null, text: text }); }
+                else timestamps.forEach(t => lines.push({ t: t, text: text }));
+            }
+            lines.sort((a, b) => (a.t === null ? 1e9 : a.t) - (b.t === null ? 1e9 : b.t));
+            return lines;
+        }
+
+        function renderLyrics(synced, plain) {
+            const el = document.getElementById('lyrics-text');
+            lyricsLines = [];
+            if (synced && /\[\d{1,2}:\d{2}/.test(synced)) {
+                lyricsLines = parseLrc(synced);
+                el.innerHTML = '';
+                lyricsLines.forEach((line, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'lyr-line';
+                    div.textContent = line.text;
+                    div.onclick = () => { if (line.t !== null) { audioPlayer.currentTime = line.t; } };
+                    el.appendChild(div);
+                });
+                updateLyricsHighlight(true);
+            } else if (plain) {
+                el.textContent = plain;
+            } else {
+                el.textContent = 'Aucune parole trouvee.';
+            }
+        }
+
+        function updateLyricsHighlight(autoScroll) {
+            if (!lyricsLines.length) return;
+            const t = audioPlayer.currentTime;
+            let idx = -1;
+            for (let i = 0; i < lyricsLines.length; i++) {
+                if (lyricsLines[i].t !== null && lyricsLines[i].t <= t + 0.2) idx = i;
+                else break;
+            }
+            const el = document.getElementById('lyrics-text');
+            const children = el.children;
+            for (let i = 0; i < children.length; i++) children[i].classList.remove('active');
+            if (idx >= 0 && children[idx]) {
+                children[idx].classList.add('active');
+                if (autoScroll && lyricsSyncOn) {
+                    const panel = document.getElementById('lyrics-panel');
+                    // scroll doux : la ligne active reste au tiers superieur
+                    const target = children[idx].offsetTop - panel.clientHeight / 3;
+                    panel.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+                }
+            }
+        }
+
+        function toggleLyricsSync() {
+            lyricsSyncOn = !lyricsSyncOn;
+            document.getElementById('lyrics-sync-btn').classList.toggle('active', lyricsSyncOn);
+        }
+
+        // =============================================================
+        // CLIP VIDEO (ou pochette en secours)
+        // =============================================================
+        let clipCurrentKey = null;   // "path" | "yt:<id>" de la piste en cours
+        let clipVideoId = null;
+
+        function clipCoverUrl() {
+            // Pochette de la piste locale en cours (fallback du clip)
+            if (currentPlayingPath && !currentPlayingPath.startsWith('online:')) {
+                const song = state.songs.find(s => s.path === currentPlayingPath);
+                if (song && song.has_cover) return '/api/cover/' + encodeURIComponent(currentPlayingPath);
+                if (song && song.artwork) return song.artwork;
+            }
+            if (currentOnlineId) return 'https://i.ytimg.com/vi/' + currentOnlineId + '/hqdefault.jpg';
+            const q = document.querySelector('#player-cover');
+            if (q && q.src && q.style.display !== 'none') return q.src;
+            return null;
+        }
+
+        function openClipModal() {
+            if (!currentPlayingName) {
+                notifyOnline('Lancez d\'abord une musique pour voir son clip.', true);
+                return;
+            }
+            const modal = document.getElementById('clip-modal');
+            const video = document.getElementById('clip-video');
+            const cover = document.getElementById('clip-cover');
+            const fallback = document.getElementById('clip-fallback');
+            const status = document.getElementById('clip-status');
+            document.getElementById('clip-title').textContent = currentPlayingName;
+            video.classList.remove('active');
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            cover.style.display = 'none';
+            fallback.style.display = 'none';
+            status.innerHTML = '<i class="fas fa-spinner fa-spin"></i>Recherche du clip...';
+            modal.style.display = 'flex';
+
+            clipCurrentKey = currentOnlineId ? 'yt:' + currentOnlineId : currentPlayingPath;
+            clipVideoId = currentOnlineId;   // piste YouTube : id deja connu
+
+            fetch('/api/clip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    yt_id: clipVideoId || '',
+                    title: currentPlayingName,
+                    artist: currentPlayingArtist && currentPlayingArtist !== '—' ? currentPlayingArtist : ''
+                })
+            }).then(r => r.json()).then(data => {
+                if (!modal.style || modal.style.display === 'none') return;
+                if (data.success && data.video_id) {
+                    clipVideoId = data.video_id;
+                    status.innerHTML = '<i class="fas fa-film"></i>Clip : lecture via votre serveur.';
+                    video.src = '/api/stream_video/' + data.video_id;
+                    video.classList.add('active');
+                    video.play().catch(() => { /* lecture manuelle via controls */ });
+                } else {
+                    // Pas de clip : la pochette prend le relais
+                    const url = clipCoverUrl();
+                    if (url) {
+                        cover.src = url;
+                        cover.style.display = 'block';
+                        status.innerHTML = '<i class="fas fa-image"></i>' + (data.error || 'Pas de clip : pochette affichee.');
+                    } else {
+                        fallback.style.display = 'flex';
+                        status.textContent = '';
+                    }
+                }
+            }).catch(() => {
+                const url = clipCoverUrl();
+                if (url) { cover.src = url; cover.style.display = 'block'; }
+                else fallback.style.display = 'flex';
+                status.textContent = 'Clip indisponible : pochette affichee.';
+            });
+        }
+
+        function closeClipModal() {
+            const video = document.getElementById('clip-video');
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            document.getElementById('clip-modal').style.display = 'none';
+            clipCurrentKey = null;
+        }
+
         function toggleLyricsPanel() {
             lyricsVisible = !lyricsVisible;
             const panel = document.getElementById('lyrics-panel');
@@ -2427,7 +2686,7 @@
             document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
             const row = document.getElementById('online-row-' + r.id);
             if (row) row.classList.add('playing');
-            if (lyricsVisible) fetchLyrics(r.title);
+            if (lyricsVisible) fetchLyrics(r.title);   // artiste/id deja dans currentPlayingArtist/currentOnlineId
             updatePlayBtnUI();
         }
 
@@ -2451,8 +2710,17 @@
                 const data = await res.json();
                 if (data.success) {
                     btn.innerHTML = '<i class="fas fa-check" style="color:var(--accent)"></i>';
-                    notifyOnline('Telecharge : ' + (data.file || r.title));
-                    fetchData(true);  // la piste apparait dans la bibliotheque locale
+                    await fetchData(true);   // rescan immédiat de la bibliotheque
+                    const stillMissing = !state.songs.some(s => s.name === data.file);
+                    if (stillMissing) {
+                        // Le fichier est telecharge mais le serveur ne le voit pas :
+                        // dossier musical mal branche (voir docker-compose, volume /music)
+                        notifyOnline('Telecharge : ' + (data.file || r.title) +
+                            ' — mais le dossier surveille (' + (state.music_dir || 'inconnu') +
+                            ') ne le voit pas. Verifiez le volume /music du docker-compose.yml.', true);
+                    } else {
+                        notifyOnline('Telecharge : ' + (data.file || r.title) + ' — visible dans votre bibliotheque.');
+                    }
                 } else {
                     btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
                     btn.disabled = false;
@@ -2463,6 +2731,30 @@
                 btn.disabled = false;
                 notifyOnline('Le telechargement a ete interrompu. Verifiez votre connexion puis reessayez.', true);
             }
+        }
+
+        // =============================================================
+        // BIBLIOTHEQUE : actualiser + dossier surveille
+        // =============================================================
+        async function refreshLibrary() {
+            const icon = document.getElementById('refresh-library-icon');
+            const btn = document.getElementById('refresh-library-btn');
+            if (icon) icon.classList.add('fa-spin');
+            if (btn) btn.disabled = true;
+            try {
+                await fetchData(true);
+                notifyOnline('Bibliotheque actualisee : ' + state.songs.length + ' titre' +
+                    (state.songs.length > 1 ? 's' : '') + '.');
+            } finally {
+                if (icon) setTimeout(() => icon.classList.remove('fa-spin'), 400);
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function showLibraryDir() {
+            const dir = state.music_dir || '(inconnu — /api/state indisponible)';
+            const count = state.songs ? state.songs.length : 0;
+            notifyOnline('Dossier surveille : ' + dir + ' — ' + count + ' titre' + (count > 1 ? 's' : '') + '.');
         }
         
         // =============================================================

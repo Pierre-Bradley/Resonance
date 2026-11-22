@@ -1,9 +1,0 @@
-Sur votre machine actuelle : pip install -U yt-dlp, remplacez app.py et templates/index.html, redémarrez, rechargez la page 2 fois (cache SW v7).
-Sur le serveur : copiez les fichiers puis docker compose up -d --build.
-
-Echec : Le telechargement a ete refuse par YouTube (403). Cause : il manque le service de deblocage
- sur votre serveur. Solution : dans docker-compose.yml, activez le service 
- "pot" (2 lignes a decommenter) puis relancez "docker compose up -d --build". Ce service genere 
- automatiquement les autorisations attendues par YouTube.
-
-

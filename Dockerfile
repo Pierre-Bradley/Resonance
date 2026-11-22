@@ -1,10 +1,23 @@
-# RESONANCE — serveur audio personnel
+# RESONANCE — serveur audio personnel (UN SEUL conteneur, tout est integre)
+
+# Etape 1 : image officielle du deblocage YouTube (PO token). On copie ses
+# fichiers ci-dessous au lieu de demarrer un 2e conteneur : certains hotes
+# Docker restreints (NAS, LXC, VM durcie) refusent de creer ce 2e conteneur
+# (erreur "OCI runtime create failed ... sysctl ... permission denied").
+# La copie de fichiers, elle, fonctionne partout.
+FROM brainicism/bgutil-ytdlp-pot-provider:2.0.2-node AS pot
+
+# Etape 2 : l'application
 FROM python:3.12-slim
 
 # ffmpeg : conversion MP3 + lecture des formats ;
-# nodejs : moteur JS requis par yt-dlp pour extraire les flux YouTube recents
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs \
+# libstdc++6 : requise par le moteur node copie ci-dessous
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
+
+# node (moteur JS requis par yt-dlp et le deblocage) : binaire officiel repris
+# de l'image ci-dessus (version 26, compatible avec les fichiers copies)
+COPY --from=pot /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
 
@@ -15,15 +28,19 @@ COPY app.py .
 COPY templates/ templates/
 COPY static/ static/
 
+# Service de deblocage YouTube : moteur + dependances prets a l'emploi.
+# L'application le lance automatiquement a la demande (aucune action requise).
+COPY --from=pot /app /pot-server
+
 # MUSIC_DIR : votre bibliotheque (volume) — DB_FILE : base SQLite (volume)
-# YTDLP_COOKIES_FILE : cookies YouTube si l'IP du serveur est verifiee par Google
-# POT_BASE_URL : service de deblocage YouTube (conteneur "pot" du docker-compose)
+# YTDLP_COOKIES_FILE : cookies YouTube si votre IP est bloquee par Google
+# YT_POT_SERVER_HOME : dossier du deblocage integre (ne pas modifier)
 ENV MUSIC_DIR=/music \
     DB_FILE=/data/resonance.db \
     HOST=0.0.0.0 \
     PORT=5000 \
     FLASK_DEBUG=0 \
-    POT_BASE_URL=http://pot:4416
+    YT_POT_SERVER_HOME=/pot-server
 
 VOLUME ["/music", "/data"]
 EXPOSE 5000

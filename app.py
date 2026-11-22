@@ -86,6 +86,18 @@ def init_db():
             FOREIGN KEY (playlist_name) REFERENCES playlists(name) ON DELETE CASCADE
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lyrics_cache (
+            cache_key TEXT PRIMARY KEY,
+            synced TEXT,
+            plain TEXT,
+            track TEXT,
+            artist TEXT,
+            fetched_at INTEGER
+        )
+    """)
+    # Cache lyrics : les resultats negatifs ne sont gardes que 24h
+    cursor.execute("DELETE FROM lyrics_cache WHERE fetched_at < ?", (int(time.time()) - 86400,))
     conn.commit()
     conn.close()
     migrate_from_json()
@@ -114,6 +126,279 @@ def migrate_from_json():
     conn.commit()
     conn.close()
     os.rename(OLD_DATA_FILE, OLD_DATA_FILE + '.backup')
+
+
+# =============================================================================
+# PAROLES (LRCLIB : base libre, sans cle API)
+# =============================================================================
+
+LRCLIB_HEADERS = {'User-Agent': 'ResonanceAudioServer/2.0 (personal music server)'}
+_lyrics_pending = set()   # evite le spam de requetes identiques concurrentes
+
+
+def _lyr_cache_get(key):
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                'SELECT synced, plain, track, artist, fetched_at FROM lyrics_cache WHERE cache_key = ?',
+                (key,)).fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error:
+        return None
+
+
+def _lyr_cache_put(key, synced, plain, track, artist):
+    try:
+        with get_db() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO lyrics_cache (cache_key, synced, plain, track, artist, fetched_at) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                (key, synced or '', plain or '', track or '', artist or '',
+                 int(time.time())))
+    except sqlite3.Error:
+        pass
+
+
+def _clean_title(title, artist):
+    """Ramene un titre de fichier/YouTube a un titre cherchable.
+    Enleve (Official Video), [HD], "feat",Numero de video, etc."""
+    t = (title or '').strip()
+    if not t:
+        return ''
+    t = re.sub(r'\([^)]*\b(video|clip|official|audio|lyrics?|hd|4k|mv)\b[^)]*\)', ' ', t, flags=re.I)
+    t = re.sub(r'\[[^\]]*\b(video|clip|official|audio|lyrics?|hd|4k|mv)\b[^\]]*\]', ' ', t, flags=re.I)
+    t = re.sub(r'\b(official|video|clip|audio|music\s?video|lyrics?)\b', ' ', t, flags=re.I)
+    t = re.sub(r'\bfeat\.?\s+[^\-|]+', ' ', t, flags=re.I)
+    t = re.sub(r'\bft\.?\s+[^\-|]+', ' ', t, flags=re.I)
+    # "A - B (feat. C) ..." : garde A et B
+    t = re.sub(r'\s*[-–]\s*(official|video|clip|audio)\b.*$', '', t, flags=re.I)
+    t = re.sub(r'[\|\•]', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip(' -–.')
+    return t
+
+
+def _lrclib_fetch(title, artist, duration):
+    """Interroge LRCLib : get precis (titre+artiste+duree) puis search en secours.
+    Retourne (synced, plain, track, artist) ou None."""
+    import urllib.parse
+    base = 'https://lrclib.net/api/'
+    try:
+        if duration and duration > 0:
+            r = requests.get(f'{base}get',
+                             params={'track_name': title, 'artist_name': artist, 'duration': duration},
+                             headers=LRCLIB_HEADERS, timeout=6)
+            if r.status_code == 200:
+                d = r.json()
+                if d.get('plainLyrics') or d.get('syncedLyrics'):
+                    return d.get('syncedLyrics') or '', d.get('plainLyrics') or '', \
+                           d.get('trackName') or title, d.get('artistName') or artist
+        q = f'{artist} {title}'.strip() if artist else title
+        r = requests.get(f'{base}search', params={'q': q},
+                         headers=LRCLIB_HEADERS, timeout=6)
+        if r.status_code == 200:
+            for d in r.json():
+                if d.get('syncedLyrics') or d.get('plainLyrics'):
+                    return d.get('syncedLyrics') or '', d.get('plainLyrics') or '', \
+                           d.get('trackName') or title, d.get('artistName') or artist
+    except requests.RequestException:
+        pass
+    return None
+
+
+@app.route('/api/lyrics', methods=['POST'])
+def get_lyrics():
+    # Paroles depuis LRCLib (titre + artiste + duree quand disponibles) avec cache SQLite.
+    # Reponse : {"success": true, "synced": "...", "plain": "...", "source": "lrclib"}
+    data = request.json or {}
+    title = (data.get('title') or data.get('name') or '').strip()
+    artist = (data.get('artist') or '').strip()
+    duration = int_or_zero(data.get('duration'))
+    song_path = (data.get('path') or '').strip()
+
+    # Titre nettoyé : les noms de fichiers et titres YouTube sont souvent charges
+    title = _clean_title(title, artist)
+    if not title:
+        return jsonify({"success": False, "error": "Titre manquant"}), 400
+
+    cache_key = f'{artist.lower()}|{title.lower()}'
+    cached = _lyr_cache_get(cache_key)
+    if cached and (cached.get('plain') or cached.get('synced')):
+        return jsonify({"success": True, "synced": cached['synced'],
+                        "plain": cached['plain'], "track": cached['track'],
+                        "artist": cached['artist'], "source": "cache"})
+
+    if cache_key in _lyrics_pending:
+        return jsonify({"success": False, "error": "Recherche en cours, reessayez dans un instant."}), 429
+    _lyrics_pending.add(cache_key)
+    try:
+        found = _lrclib_fetch(title, artist, duration)
+        if not found and artist:
+            # 2e essai sans l'artiste (tags vides ou erronees derri
+            found = _lrclib_fetch(title, '', duration)
+        if not found and song_path:
+            # 3e essai : titre deduit du nom de fichier
+            base = os.path.splitext(os.path.basename(song_path))[0]
+            if ' - ' in base:
+                file_artist, file_title = base.split(' - ', 1)
+                found = _lrclib_fetch(_clean_title(file_title, file_artist), file_artist.strip(), duration)
+        if not found:
+            _lyr_cache_put(cache_key, '', '', '', '')   # negatif 24h -> evite de re-chercher en boucle
+            return jsonify({"success": False, "error": "Paroles introuvables pour ce titre."})
+        synced, plain, track, lyr_artist = found
+        _lyr_cache_put(cache_key, synced, plain, track, lyr_artist)
+        return jsonify({"success": True, "synced": synced, "plain": plain,
+                        "track": track, "artist": lyr_artist, "source": "lrclib"})
+    finally:
+        _lyrics_pending.discard(cache_key)
+
+
+def int_or_zero(v):
+    try:
+        n = int(v)
+        return n if n > 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+# =============================================================================
+# CLIP VIDEO (relais du flux YouTube, comme l'audio)
+# =============================================================================
+
+_yt_video_cache = {}    # track_id -> (video_id, expire_ts)
+
+
+def _yt_lookup_video(query):
+    # Cherche le clip officiel et retourne l'ID de la video, ou None.
+    opts = _yt_base_opts()
+    opts['extract_flat'] = True
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f'ytsearch5:{query}', download=False)
+        for e in (info.get('entries') or []):
+            vid = e.get('id') or ''
+            duration = e.get('duration') or 0
+            if not vid or e.get('is_live'):
+                continue
+            # Cote clip : ~2 a 7 min ; les films/sets/mix depassent 15 min
+            if duration and duration > 900:
+                continue
+            return vid, duration
+    except Exception:
+        pass
+    return None, 0
+
+
+@app.route('/api/clip', methods=['POST'])
+def get_clip():
+    # Retourne l'ID du clip YouTube pour le morceau en cours.
+    # Ordre : id YouTube connu (piste jouee depuis YouTube) > recherche
+    # "artiste titre clip officiel" > recherche simple. Fallback UI : pochette.
+    if not YTDLP_AVAILABLE:
+        return jsonify({"success": False, "error": "yt-dlp non installe"}), 500
+    data = request.json or {}
+    known_id = (data.get('yt_id') or '').strip()
+    if known_id and re.match(r'^[A-Za-z0-9_-]{6,20}$', known_id):
+        return jsonify({"success": True, "video_id": known_id, "matched": "known"})
+    title = (data.get('title') or '').strip()
+    artist = (data.get('artist') or '').strip()
+    if not title:
+        return jsonify({"success": False, "error": "Titre manquant"}), 400
+
+    clean = _clean_title(title, artist)
+    key = f'{artist.lower()}|{clean.lower()}'
+    with _yt_lock:
+        cached = _yt_video_cache.get(key)
+        if cached and time.time() < cached[1]:
+            return jsonify({"success": True, "video_id": cached[0], "matched": "search"})
+
+    for query in (f'{artist} {clean} clip officiel'.strip(), f'{artist} {clean}'.strip()):
+        if not query.strip():
+            continue
+        vid, _dur = _yt_lookup_video(query)
+        if vid:
+            with _yt_lock:
+                _yt_video_cache[key] = (vid, time.time() + 6 * 3600)
+            return jsonify({"success": True, "video_id": vid, "matched": "search"})
+    return jsonify({"success": False, "error": "Aucun clip trouve : la pochette est affichee."})
+
+
+def _yt_resolve_video(video_id):
+    # URL du flux video (avec piste audio integree), cache 30 min.
+    # Formats PROGRESSIFS uniquement (video+audio dans un seul flux mp4) :
+    # les formats separes ne sont pas jouables par la balise <video> du
+    # navigateur sans mux ffmpeg cote serveur.
+    with _yt_lock:
+        cached = _yt_video_cache.get('url:' + video_id)
+        if cached and time.time() < cached[1]:
+            return cached[0]
+    opts = _yt_base_opts()
+    opts['format'] = ('best[protocol^=http][acodec!=none][vcodec!=none]/'
+                      'best[protocol^=https][acodec!=none][vcodec!=none]/'
+                      'b[acodec!=none][vcodec!=none]/best')
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+        url = info.get('url')
+        if not url:
+            raise yt_dlp.utils.DownloadError('Flux video introuvable.')
+        with _yt_lock:
+            _yt_video_cache['url:' + video_id] = (url, time.time() + YT_CACHE_TTL)
+        return url
+    except yt_dlp.utils.DownloadError as e:
+        raise _YtError(_yt_error_message(e))
+
+
+@app.route('/api/stream_video/<video_id>')
+def stream_video(video_id):
+    # Proxy du flux VIDEO YouTube (avec son) : same-origin, seek via Range.
+    if not re.match(r'^[A-Za-z0-9_-]{6,20}$', video_id):
+        return jsonify({"error": "ID invalide"}), 400
+    if not YTDLP_AVAILABLE:
+        return jsonify({"error": "yt-dlp non installe"}), 500
+    try:
+        url = _yt_resolve_video(video_id)
+    except _YtError as e:
+        return jsonify({"error": str(e)}), e.code
+
+    req_headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.youtube.com/'}
+    range_header = request.headers.get('Range')
+    if range_header:
+        req_headers['Range'] = range_header
+
+    upstream = None
+    for attempt in (0, 1):
+        try:
+            upstream = requests.get(url, headers=req_headers, stream=True, timeout=30)
+        except requests.RequestException:
+            return jsonify({"error": "Flux indisponible"}), 502
+        if upstream.status_code in (200, 206):
+            break
+        upstream.close()
+        if attempt == 0:
+            with _yt_lock:
+                _yt_video_cache.pop('url:' + video_id, None)
+            try:
+                url = _yt_resolve_video(video_id)
+            except _YtError as e:
+                return jsonify({"error": str(e)}), e.code
+        else:
+            return jsonify({"error": "Flux indisponible"}), 502
+
+    resp_headers = {}
+    for h in ('Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if h in upstream.headers:
+            resp_headers[h] = upstream.headers[h]
+    resp_headers.setdefault('Content-Type', 'video/mp4')
+
+    def relay():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return Response(stream_with_context(relay()), status=upstream.status_code, headers=resp_headers)
     print(f"[MIGRATION] Donnees migrees depuis {OLD_DATA_FILE} vers SQLite.")
 
 
@@ -364,26 +649,36 @@ def save_metadata(file_path, title, artist, album, genre):
 # =============================================================================
 
 def get_all_songs(directory):
+    # Balayage du dossier musical : un fichier illisible (telechargement en
+    # cours, tags corrompus...) ne doit jamais casser la bibliotheque entiere.
     music_files = []
-    for root, dirs, files in os.walk(directory):
+    for root, dirs, files in os.walk(directory, onerror=lambda e: None):
         for file in files:
-            if file.lower().endswith(('.mp3', '.wav', '.ogg', '.flac', '.m4a')):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, directory).replace('\\', '/')
+            if not file.lower().endswith(('.mp3', '.wav', '.ogg', '.flac', '.m4a')):
+                continue
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, directory).replace('\\', '/')
+            try:
                 mtime = os.path.getmtime(full_path)
                 meta = extract_metadata(full_path)
-                display_title = meta["title"] or os.path.splitext(file)[0]
-                music_files.append({
-                    "name": file,
-                    "path": rel_path,
-                    "mtime": mtime,
-                    "title": display_title,
-                    "artist": meta["artist"] or "Artiste inconnu",
-                    "album": meta["album"] or "Album inconnu",
-                    "genre": meta["genre"] or "Genre inconnu",
-                    "duration": meta["duration"],
-                    "has_cover": meta["has_cover"]
-                })
+            except Exception:
+                continue   # fichier momentanement illisible : ignore, sans faire planter l'etat
+            if not meta["duration"]:
+                # Pas de duree lisible : binaire corrompu ou telechargement en
+                # cours — pas une musique jouable, on ne l'affiche pas.
+                continue
+            display_title = meta["title"] or os.path.splitext(file)[0]
+            music_files.append({
+                "name": file,
+                "path": rel_path,
+                "mtime": mtime,
+                "title": display_title,
+                "artist": meta["artist"] or "Artiste inconnu",
+                "album": meta["album"] or "Album inconnu",
+                "genre": meta["genre"] or "Genre inconnu",
+                "duration": meta["duration"],
+                "has_cover": meta["has_cover"]
+            })
     return music_files
 
 
@@ -404,7 +699,7 @@ MANIFEST = {
 }
 
 SW_CODE = """
-const CACHE_NAME = 'resonance-v7';
+const CACHE_NAME = 'resonance-v8';
 const STATIC_URLS = ['/'];
 
 self.addEventListener('install', (event) => {
@@ -476,7 +771,8 @@ def get_state():
     return jsonify({
         "songs": songs,
         "favorites": get_favorites(),
-        "playlists": get_playlists()
+        "playlists": get_playlists(),
+        "music_dir": MUSIC_DIR
     })
 
 
@@ -545,28 +841,6 @@ def toggle_playlist_song():
         return jsonify({"success": False}), 400
     toggle_playlist_song_db(playlist_name, song_path)
     return jsonify({"success": True})
-
-
-@app.route('/api/lyrics', methods=['POST'])
-def get_lyrics():
-    song_name = request.json.get('name', '')
-    clean_name = os.path.splitext(song_name)[0]
-    try:
-        response = requests.get(f"https://lrclib.net/api/search?q={clean_name}", timeout=3)
-        if response.status_code == 200:
-            results = response.json()
-            if results and len(results) > 0:
-                song_data = results[0]
-                lyrics = song_data.get('plainLyrics') or song_data.get('syncedLyrics')
-                if lyrics:
-                    return jsonify({
-                        "success": True, "lyrics": lyrics,
-                        "track": song_data.get('trackName'),
-                        "artist": song_data.get('artistName')
-                    })
-        return jsonify({"success": False, "error": "Paroles introuvables."})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route('/stream/<path:subpath>')
@@ -960,7 +1234,14 @@ def download_online():
 # =============================================================================
 
 YTDLP_COOKIES = os.environ.get('YTDLP_COOKIES_FILE', '')
-POT_BASE_URL = os.environ.get('POT_BASE_URL', 'http://127.0.0.1:4416')
+# Deblocage YouTube (PO token) : deux modes possibles.
+# 1) Script integre (defaut, un seul conteneur) : le dossier du serveur de
+#    deblocage est installe a cote de app.py par le Dockerfile (/pot-server).
+# 2) Serveur HTTP optionnel : si POT_BASE_URL est defini (ex. ancien conteneur
+#    "pot" sur un hote Docker qui l'accepte), il est utilise en priorite.
+POT_BASE_URL = os.environ.get('POT_BASE_URL', '')
+POT_SERVER_HOME = (os.environ.get('YT_POT_SERVER_HOME')
+                   or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pot-server'))
 YT_CACHE_TTL = 1800   # 30 min
 
 _yt_lock = threading.Lock()
@@ -977,10 +1258,9 @@ _BOT_MSG = ("YouTube a bloque votre serveur pour le moment.\n"
 
 # Message pour l'erreur 403 typique du telechargement (PO token manquant).
 _POT_MSG = ("Le telechargement a ete refuse par YouTube (403).\n"
-            "Cause : il manque le service de deblocage sur votre serveur.\n"
-            "Solution : dans docker-compose.yml, activez le service \"pot\" (2 lignes a "
-            "decommenter) puis relancez \"docker compose up -d --build\". "
-            "Ce service genere automatiquement les autorisations attendues par YouTube.")
+            "L'application integre un deblocage automatique : relancez "
+            "\"docker compose up -d --build\" pour en beneficier. Si le refus "
+            "persiste, suivez la section cookies du docker-compose.yml (3 etapes).")
 
 
 class _YtError(Exception):
@@ -990,7 +1270,9 @@ class _YtError(Exception):
 
 
 def _pot_available():
-    # Le service de deblocage (PO token) tourne-il ?
+    # Le service de deblocage HTTP optionnel tourne-il ? (mode script = True)
+    if not POT_BASE_URL:
+        return os.path.isfile(os.path.join(POT_SERVER_HOME, 'build', 'generate_once.js'))
     try:
         import requests as _r
         r = _r.get(f'{POT_BASE_URL}/ping', timeout=2)
@@ -1001,7 +1283,7 @@ def _pot_available():
 
 def _yt_base_opts():
     # Options communes yt-dlp ; moteur JS (node/deno) si present, cookies si fournis,
-    # service de deblocage PO token si joignable.
+    # deblocage PO token : script integre (+ serveur HTTP optionnel si defini).
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -1015,9 +1297,13 @@ def _yt_base_opts():
         opts['cookiefile'] = YTDLP_COOKIES
     if YTDLP_AVAILABLE:
         try:
-            opts['extractor_args'] = {
-                'youtubepot-bgutilhttp': {'base_url': [POT_BASE_URL]}
-            }
+            ea = {}
+            if POT_BASE_URL:
+                ea['youtubepot-bgutilhttp'] = {'base_url': [POT_BASE_URL]}
+            if os.path.isfile(os.path.join(POT_SERVER_HOME, 'build', 'generate_once.js')):
+                ea['youtubepot-bgutilscript'] = {'server_home': [POT_SERVER_HOME]}
+            if ea:
+                opts['extractor_args'] = ea
         except Exception:
             pass
     return opts

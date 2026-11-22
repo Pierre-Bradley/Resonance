@@ -1,0 +1,36 @@
+# RESONANCE — variante "reseau hote" (plan B si votre hote Docker refuse de
+# creer des conteneurs avec l'erreur "OCI runtime ... sysctl ... permission
+# denied" et que vous ne pouvez pas corriger l'hote, voir README.md).
+#
+# Utilisation :
+#   docker compose down                # arrete la version standard
+#   docker compose -f docker-compose-alt.yml up -d --build
+#
+# Le conteneur partage le reseau de la machine et ecoute directement le
+# port 7000 : meme adresse http://IP-de-votre-serveur:7000
+
+services:
+  resonance:
+    build: .
+    image: resonance
+    container_name: resonance
+    # Pas de mapping "ports" : le port ci-dessous est ouvert directement
+    # sur la machine (le port 5000 deja pris chez vous n'est pas touche).
+    network_mode: host
+    environment:
+      HOST: 0.0.0.0
+      PORT: "7000"
+      FLASK_DEBUG: "0"
+      # YTDLP_COOKIES_FILE: /app/cookies.txt
+    volumes:
+      # VOTRE dossier musical : chemin ABSOLU REEL entre guillemets (pas "~"
+      # ni "$HOME" : avec sudo, $HOME devient /root et la musique devient
+      # invisible dans l'application !). Exemple : "/home/votre-user/Musique:/music"
+      - /root/Musique:/music
+      - resonance-data:/data
+      # cookies (voir docker-compose.yml, section cookies) :
+      # - ./cookies.txt:/app/cookies.txt:ro
+    restart: unless-stopped
+
+volumes:
+  resonance-data:

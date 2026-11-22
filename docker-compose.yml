@@ -21,17 +21,6 @@ services:
     environment:
       # YTDLP_COOKIES_FILE: /app/cookies.txt
       FLASK_DEBUG: "0"
-      POT_BASE_URL: http://pot:4416
-    depends_on:
-      - pot
-    restart: unless-stopped
-
-  # Service de deblocage YouTube (genere automatiquement les autorisations
-  # attendues par YouTube pour l'ecoute et le telechargement sur un serveur).
-  # NE TOUCHEZ A RIEN ICI : il demarre tout seul avec l'application.
-  pot:
-    image: brainicism/bgutil-ytdlp-pot-provider:latest
-    container_name: resonance-pot
     restart: unless-stopped
 
 volumes:
