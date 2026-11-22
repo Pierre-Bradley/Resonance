@@ -1,0 +1,38 @@
+services:
+  resonance:
+    build: .
+    image: resonance
+    container_name: resonance
+    ports:
+      # Port d'entree de votre serveur : tapez http://IP-de-votre-serveur:7000
+      - "7000:5000"
+    volumes:
+      # VOTRE dossier musical — adaptez le chemin de gauche (ou laissez pour un
+      # dossier ./musique cree a cote du compose) :
+      - ${HOME}/Musique:/music
+      # Base de donnees (favoris, playlists) persistante :
+      - resonance-data:/data
+      # FICHIER COOKIES — a activer SEULEMENT si YouTube bloque votre serveur
+      # (message "YouTube a bloque votre serveur"). Trois etapes :
+      #   1) connectez-vous a YouTube dans votre navigateur
+      #   2) installez l'extension "Get cookies.txt LOCALLY" et exportez cookies.txt
+      #   3) placez-le a cote de ce fichier et decommentez les 2 lignes suivantes :
+      # - ./cookies.txt:/app/cookies.txt:ro
+    environment:
+      # YTDLP_COOKIES_FILE: /app/cookies.txt
+      FLASK_DEBUG: "0"
+      POT_BASE_URL: http://pot:4416
+    depends_on:
+      - pot
+    restart: unless-stopped
+
+  # Service de deblocage YouTube (genere automatiquement les autorisations
+  # attendues par YouTube pour l'ecoute et le telechargement sur un serveur).
+  # NE TOUCHEZ A RIEN ICI : il demarre tout seul avec l'application.
+  pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: resonance-pot
+    restart: unless-stopped
+
+volumes:
+  resonance-data:

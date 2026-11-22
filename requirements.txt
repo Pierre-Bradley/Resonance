@@ -1,0 +1,7 @@
+# pip install -r requirements.txt
+flask>=3.0
+requests>=2.31
+mutagen>=1.47
+yt-dlp>=2025.1.15
+bgutil-ytdlp-pot-provider>=1.4
+gunicorn>=21.2

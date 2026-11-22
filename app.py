@@ -1,8 +1,11 @@
 import re
 import os
+import time
+import shutil
+import tempfile
+import threading
 import sqlite3
 import requests
-import base64
 from flask import Flask, render_template, jsonify, send_file, request, Response, stream_with_context
 from werkzeug.utils import secure_filename
 
@@ -24,10 +27,21 @@ except ImportError:
     print("Installez-le avec:  pip install mutagen")
     print("=" * 60)
 
+try:
+    import yt_dlp
+    YTDLP_AVAILABLE = True
+except ImportError:
+    YTDLP_AVAILABLE = False
+    print("=" * 60)
+    print("WARNING: yt-dlp n'est pas installe (recherche YouTube inactive).")
+    print("Installez-le avec:  pip install yt-dlp")
+    print("=" * 60)
+
 app = Flask(__name__)
 
-MUSIC_DIR = os.path.join(os.path.expanduser('~'), 'Musique')
-DB_FILE = 'resonance.db'
+MUSIC_DIR = os.environ.get('MUSIC_DIR') or os.path.join(os.path.expanduser('~'), 'Musique')
+os.makedirs(MUSIC_DIR, exist_ok=True)   # cree le dossier musical s'il n'existe pas
+DB_FILE = os.environ.get('DB_FILE', 'resonance.db')
 OLD_DATA_FILE = 'resonance_data.json'
 
 # =============================================================================
@@ -390,7 +404,7 @@ MANIFEST = {
 }
 
 SW_CODE = """
-const CACHE_NAME = 'resonance-v5';
+const CACHE_NAME = 'resonance-v7';
 const STATIC_URLS = ['/'];
 
 self.addEventListener('install', (event) => {
@@ -614,9 +628,71 @@ def update_metadata():
 # EXPLORATION EN LIGNE (AUDIUS — musique libre, publiee par les artistes)
 # =============================================================================
 
-ONLINE_DOWNLOAD_DIR = os.path.join(os.path.expanduser('~'), 'Musique', 'Musiques')
+# Les telechargements arrivent directement dans le dossier musical de l'utilisateur
+ONLINE_DOWNLOAD_DIR = MUSIC_DIR
 AUDIUS_APP_NAME = 'RESONANCE'
 _audius_host = None
+
+
+# =============================================================================
+# ETAT DE LA CONNEXION INTERNET
+# =============================================================================
+
+_net_lock = threading.Lock()
+_net_cache = {"ts": 0.0, "online": False, "audius_ok": False, "youtube_ok": False}
+
+
+def _check_internet():
+    # Verifie la connectivite internet (resultat en cache 10 s).
+    global _audius_host
+    with _net_lock:
+        now = time.time()
+        if now - _net_cache["ts"] < 10:
+            return dict(_net_cache)
+
+        # Internet global : hote neutre
+        online = False
+        try:
+            r = requests.get('https://www.gstatic.com/generate_204', timeout=3)
+            online = (r.status_code == 204)
+        except requests.RequestException:
+            pass
+
+        audius_ok = False
+        try:
+            r = requests.get('https://api.audius.co', timeout=3)
+            audius_ok = (r.status_code == 200)
+        except requests.RequestException:
+            pass
+        if not audius_ok:
+            _audius_host = None   # forcera une re-resolution au prochain appel
+
+        youtube_ok = False
+        try:
+            r = requests.head('https://www.youtube.com/generate_204', timeout=3, allow_redirects=True)
+            youtube_ok = (r.status_code == 204)
+        except requests.RequestException:
+            try:
+                r = requests.head('https://www.youtube.com', timeout=3, allow_redirects=True)
+                youtube_ok = (r.status_code == 200)
+            except requests.RequestException:
+                pass
+
+        _net_cache["ts"] = now
+        _net_cache["online"] = online
+        _net_cache["audius_ok"] = audius_ok
+        _net_cache["youtube_ok"] = youtube_ok
+        return dict(_net_cache)
+
+
+@app.route('/api/connection_status')
+def connection_status():
+    state = _check_internet()
+    return jsonify({
+        "online": state["online"],
+        "audius_ok": state["audius_ok"],
+        "youtube_ok": state["youtube_ok"]
+    })
 
 
 def get_audius_host():
@@ -822,6 +898,9 @@ def download_online():
                     if durls.get(key):
                         download_url, ext = durls[key], candidate_ext
                         break
+                if not download_url:
+                    # Endpoint officiel de telechargement d'Audius
+                    download_url, ext = f"{host}/v1/tracks/{track_id}/download", '.mp3'
         except (requests.RequestException, ValueError):
             pass
 
@@ -838,7 +917,23 @@ def download_online():
             ext = '.m4a' if ('mp4' in ctype or 'aac' in ctype) else '.mp3'
         r.raise_for_status()
 
-        base = secure_filename(f"{artist} - {title}") or f"piste_{track_id[:8]}"
+        # Affine l'extension d'apres le type MIME reel du fichier recu
+        ctype = (r.headers.get('Content-Type') or '').lower()
+        if 'wav' in ctype:
+            ext = '.wav'
+        elif 'flac' in ctype:
+            ext = '.flac'
+        elif 'ogg' in ctype:
+            ext = '.ogg'
+        elif 'mp4' in ctype or 'aac' in ctype or 'm4a' in ctype:
+            ext = '.m4a'
+        else:
+            ext = '.mp3'
+
+        # Nom de fichier lisible : accents conserves, caracteres interdits retires
+        safe_base = re.sub(r'[\\/:*?"<>|]+', ' ', f"{artist} - {title}")
+        safe_base = re.sub(r'\s+', ' ', safe_base).strip(' .')[:150]
+        base = safe_base or f"piste_{track_id[:8]}"
         dest = _unique_dest(ONLINE_DOWNLOAD_DIR, base, ext)
         with open(dest, 'wb') as f:
             for chunk in r.iter_content(chunk_size=64 * 1024):
@@ -861,14 +956,310 @@ def download_online():
         return jsonify({"success": False, "error": f"Erreur disque : {e}"}), 500
 
 # =============================================================================
+# EXPLORATION YOUTUBE (catalogue complet via yt-dlp)
+# =============================================================================
+
+YTDLP_COOKIES = os.environ.get('YTDLP_COOKIES_FILE', '')
+POT_BASE_URL = os.environ.get('POT_BASE_URL', 'http://127.0.0.1:4416')
+YT_CACHE_TTL = 1800   # 30 min
+
+_yt_lock = threading.Lock()
+_yt_url_cache = {}      # video_id -> (url, expire_ts)
+_yt_search_cache = {}   # requete -> (ts, resultats)
+
+# Message simple, actionnable, sans jargon technique.
+_BOT_MSG = ("YouTube a bloque votre serveur pour le moment.\n"
+            "Solution : ouvrez le fichier docker-compose.yml et suivez les 3 etapes "
+            "commentees (section cookies) ; apres redemarrage tout fonctionne.\n"
+            "Etapes : 1) connectez-vous a YouTube dans votre navigateur 2) installez "
+            "l'extension \"Get cookies.txt LOCALLY\" 3) exportez le fichier cookies.txt "
+            "a cote du docker-compose.yml et decommentez les 2 lignes indiquees.")
+
+# Message pour l'erreur 403 typique du telechargement (PO token manquant).
+_POT_MSG = ("Le telechargement a ete refuse par YouTube (403).\n"
+            "Cause : il manque le service de deblocage sur votre serveur.\n"
+            "Solution : dans docker-compose.yml, activez le service \"pot\" (2 lignes a "
+            "decommenter) puis relancez \"docker compose up -d --build\". "
+            "Ce service genere automatiquement les autorisations attendues par YouTube.")
+
+
+class _YtError(Exception):
+    def __init__(self, message, code=502):
+        super().__init__(message)
+        self.code = code
+
+
+def _pot_available():
+    # Le service de deblocage (PO token) tourne-il ?
+    try:
+        import requests as _r
+        r = _r.get(f'{POT_BASE_URL}/ping', timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _yt_base_opts():
+    # Options communes yt-dlp ; moteur JS (node/deno) si present, cookies si fournis,
+    # service de deblocage PO token si joignable.
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'socket_timeout': 15,
+    }
+    runtimes = [r for r in ('node', 'deno') if shutil.which(r)]
+    if runtimes:
+        opts['js_runtimes'] = {r: {} for r in runtimes}
+    if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
+        opts['cookiefile'] = YTDLP_COOKIES
+    if YTDLP_AVAILABLE:
+        try:
+            opts['extractor_args'] = {
+                'youtubepot-bgutilhttp': {'base_url': [POT_BASE_URL]}
+            }
+        except Exception:
+            pass
+    return opts
+
+
+def _yt_error_message(exc):
+    # Traduit les erreurs techniques yt-dlp en phrases simples et actionnables.
+    msg = str(exc)
+    if 'Sign in to confirm' in msg or 'not a bot' in msg:
+        return _BOT_MSG
+    if 'HTTP Error 403' in msg or 'unable to download video data' in msg:
+        return _POT_MSG if not _pot_available() else (
+            "YouTube refuse ce telechargement (403) malgre le service de deblocage.\n"
+            "Reessayez : le refus est souvent temporaire. Si cela persiste, suivez la "
+            "section cookies du docker-compose.yml.")
+    if 'HTTP Error 429' in msg:
+        return ("Vous avez fait trop de demandes d'un coup (429).\n"
+                "Patientez 1 a 2 minutes puis reessayez.")
+    if 'Video unavailable' in msg or 'video unavailable' in msg or 'Private video' in msg:
+        return ("Cette video n'est plus disponible sur YouTube "
+                "(supprimee ou privee). Essayez une autre piste.")
+    if 'malformed' in msg.lower() or 'not a valid URL' in msg:
+        return "L'adresse de cette video est incorrecte."
+    if 'Connection' in msg or 'timed out' in msg or 'timeout' in msg.lower():
+        return ("Connexion a YouTube impossible pour le moment.\n"
+                "Verifiez que votre serveur a acces a internet, puis reessayez.")
+    return ("Le telechargement a echoue.\n"
+            "Reessayez dans quelques minutes ; si cela persiste, relancez "
+            "\"docker compose up -d --build\".")
+
+
+def _yt_resolve_stream(track_id):
+    # Retourne l'URL du flux audio (cache 30 min, re-extrait si expiree).
+    with _yt_lock:
+        cached = _yt_url_cache.get(track_id)
+        if cached and time.time() < cached[1]:
+            return cached[0]
+    opts = _yt_base_opts()
+    opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f'https://www.youtube.com/watch?v={track_id}', download=False)
+        url = info.get('url')
+        if not url:
+            raise yt_dlp.utils.DownloadError('Flux audio introuvable.')
+        with _yt_lock:
+            _yt_url_cache[track_id] = (url, time.time() + YT_CACHE_TTL)
+        return url
+    except yt_dlp.utils.DownloadError as e:
+        raise _YtError(_yt_error_message(e))
+
+
+@app.route('/api/search_youtube')
+def search_youtube():
+    # Recherche plate : rapide, ne resolve pas chaque video individuellement.
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({"results": []})
+    if not YTDLP_AVAILABLE:
+        return jsonify({"results": [], "error": "yt-dlp non installe : pip install yt-dlp"}), 500
+    key = query.lower()
+    with _yt_lock:
+        cached = _yt_search_cache.get(key)
+        if cached and time.time() - cached[0] < YT_CACHE_TTL:
+            return jsonify({"results": cached[1]})
+    opts = _yt_base_opts()
+    opts['extract_flat'] = True
+    try:
+        # Prefixe ytsearch explicite : default_search est ignore par certaines
+        # versions de yt-dlp. Une URL collee dans la recherche est resolue
+        # directement comme une piste unique.
+        target = query if re.match(r'^https?://', query) else f'ytsearch{25}:{query}'
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(target, download=False)
+        entries = info.get('entries') or []
+        if info.get('_type') != 'playlist' and info.get('id'):
+            entries = [info]
+        results, seen = [], set()
+        for e in entries:
+            vid = e.get('id') or ''
+            duration = e.get('duration')
+            if not vid or vid in seen or e.get('is_live') or not duration:
+                continue
+            seen.add(vid)
+            results.append({
+                'id': vid,
+                'title': e.get('title') or 'Sans titre',
+                'artist': e.get('channel') or e.get('uploader') or 'YouTube',
+                'duration': int(duration),
+                'artwork': f'https://i.ytimg.com/vi/{vid}/mqdefault.jpg',
+                'views': e.get('view_count'),
+                'source': 'youtube',
+            })
+        with _yt_lock:
+            _yt_search_cache[key] = (time.time(), results)
+        return jsonify({"results": results})
+    except yt_dlp.utils.DownloadError as e:
+        return jsonify({"results": [], "error": _yt_error_message(e)}), 502
+    except Exception as e:
+        return jsonify({"results": [], "error": f"YouTube : {str(e)[:180]}"}), 502
+
+
+@app.route('/api/stream_youtube/<track_id>')
+def stream_youtube(track_id):
+    # Proxy du flux audio YouTube : same-origin => EQ (Web Audio) et seek fonctionnent.
+    if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
+        return jsonify({"error": "ID invalide"}), 400
+    if not YTDLP_AVAILABLE:
+        return jsonify({"error": "yt-dlp non installe"}), 500
+
+    try:
+        url = _yt_resolve_stream(track_id)
+    except _YtError as e:
+        return jsonify({"error": str(e)}), e.code
+
+    req_headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.youtube.com/'}
+    range_header = request.headers.get('Range')
+    if range_header:
+        req_headers['Range'] = range_header
+
+    upstream = None
+    for attempt in (0, 1):
+        try:
+            upstream = requests.get(url, headers=req_headers, stream=True, timeout=30)
+        except requests.RequestException:
+            return jsonify({"error": "Flux indisponible"}), 502
+        if upstream.status_code in (200, 206):
+            break
+        upstream.close()
+        if attempt == 0:
+            # URL expiree ou refusee (403/410) : re-extraction complete
+            with _yt_lock:
+                _yt_url_cache.pop(track_id, None)
+            try:
+                url = _yt_resolve_stream(track_id)
+            except _YtError as e:
+                return jsonify({"error": str(e)}), e.code
+        else:
+            return jsonify({"error": "Flux indisponible"}), 502
+
+    resp_headers = {}
+    for h in ('Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if h in upstream.headers:
+            resp_headers[h] = upstream.headers[h]
+    resp_headers.setdefault('Content-Type', 'audio/mp4')
+    resp_headers.setdefault('Accept-Ranges', 'bytes')
+
+    def relay():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return Response(stream_with_context(relay()), status=upstream.status_code, headers=resp_headers)
+
+
+@app.route('/api/download_youtube', methods=['POST'])
+def download_youtube():
+    # Telecharge la piste audio dans MUSIC_DIR, tags + pochette integres.
+    if not YTDLP_AVAILABLE:
+        return jsonify({"success": False, "error": "yt-dlp non installe : pip install yt-dlp"}), 500
+    data = request.json or {}
+    track_id = (data.get('id') or '').strip()
+    title = (data.get('title') or 'sans titre').strip()
+    artist = (data.get('artist') or 'YouTube').strip()
+    artwork_url = data.get('artwork') or f'https://i.ytimg.com/vi/{track_id}/hqdefault.jpg'
+    if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
+        return jsonify({"success": False, "error": "ID invalide"}), 400
+
+    ffmpeg = shutil.which('ffmpeg')
+    os.makedirs(ONLINE_DOWNLOAD_DIR, exist_ok=True)
+    workdir = tempfile.mkdtemp(prefix='resonance_yt_')
+
+    opts = _yt_base_opts()
+    opts.update({
+        'outtmpl': os.path.join(workdir, '%(id)s.%(ext)s'),
+        'retries': 3,
+        'format': ('bestaudio/best' if ffmpeg else
+                   'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio[ext=ogg]/bestaudio'),
+    })
+    if ffmpeg:
+        opts['postprocessors'] = [
+            {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'},
+            {'key': 'FFmpegMetadata'},
+        ]
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.extract_info(f'https://www.youtube.com/watch?v={track_id}', download=True)
+
+        produced, allowed = None, ('.mp3', '.m4a', '.ogg', '.wav', '.flac')
+        for name in sorted(os.listdir(workdir)):
+            if name.startswith(track_id) and name.lower().endswith(allowed):
+                produced = os.path.join(workdir, name)
+                break
+        if not produced:
+            raise _YtError("Format audio non exploitable : installez ffmpeg puis reessayez.", 500)
+
+        safe_base = re.sub(r'[\\/:*?"<>|]+', ' ', f"{artist} - {title}")
+        safe_base = re.sub(r'\s+', ' ', safe_base).strip(' .')[:150] or f"youtube_{track_id[:8]}"
+        dest = _unique_dest(ONLINE_DOWNLOAD_DIR, safe_base, os.path.splitext(produced)[1].lower())
+        shutil.move(produced, dest)
+
+        artwork_bytes = None
+        if artwork_url:
+            try:
+                ar = requests.get(artwork_url, timeout=10)
+                if ar.status_code == 200:
+                    artwork_bytes = ar.content
+            except requests.RequestException:
+                pass
+        _tag_downloaded_file(dest, title, artist, artwork_bytes)
+
+        rel_path = os.path.relpath(dest, MUSIC_DIR).replace('\\', '/')
+        return jsonify({"success": True, "file": os.path.basename(dest),
+                        "library_path": rel_path, "dir": ONLINE_DOWNLOAD_DIR})
+    except yt_dlp.utils.DownloadError as e:
+        code = 502   # 401 laisserait croire a un probleme de connexion a l'app
+        return jsonify({"success": False, "error": _yt_error_message(e)}), code
+    except _YtError as e:
+        return jsonify({"success": False, "error": str(e)}), e.code
+    except OSError as e:
+        return jsonify({"success": False, "error": f"Erreur disque : {e}"}), 500
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+# =============================================================================
 # LANCEMENT
 # =============================================================================
 
+init_db()   # idempotent : necessaire aussi sous gunicorn/docker (import du module)
+
 if __name__ == '__main__':
-    init_db()
     print(f"RESONANCE AUDIO SERVER ACTIF - Dossier : {MUSIC_DIR}")
     print(f"Base de donnees : {os.path.abspath(DB_FILE)}")
     if not MUTAGEN_AVAILABLE:
         print("\nNOTE: Installez 'mutagen' pour activer les metadonnees:")
         print("  pip install mutagen\n")
-    app.run(debug=True, port=5000)
+    if not YTDLP_AVAILABLE:
+        print("NOTE: Installez 'yt-dlp' pour la recherche YouTube:")
+        print("  pip install yt-dlp\n")
+    host = os.environ.get('HOST', '127.0.0.1')
+    port = int(os.environ.get('PORT', '5000'))
+    app.run(debug=os.environ.get('FLASK_DEBUG', '1') == '1', host=host, port=port)

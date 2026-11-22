@@ -369,7 +369,7 @@
             box-shadow: 0 4px 12px var(--shadow-color);
         }
         .song-row.playing {
-            background: rgba(99, 102, 241, 0.12);
+            background: rgba(212, 175, 55, 0.12);
             border-color: var(--accent);
             box-shadow: 0 0 16px var(--accent-glow);
         }
@@ -531,7 +531,7 @@
         }
         .queue-item:hover { background: var(--row-hover); }
         .queue-item.playing-queue {
-            background: rgba(99, 102, 241, 0.15);
+            background: rgba(212, 175, 55, 0.15);
             border-color: var(--accent);
         }
         .queue-item-info { flex: 1; overflow: hidden; min-width: 0; }
@@ -555,7 +555,7 @@
         }
         .queue-drag-over {
             border: 2px dashed var(--accent);
-            background: rgba(99, 102, 241, 0.08);
+            background: rgba(212, 175, 55, 0.10);
         }
 
         /* PLAYER */
@@ -810,7 +810,7 @@
         .drop-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(99, 102, 241, 0.15);
+            background: rgba(212, 175, 55, 0.15);
             border: 4px dashed var(--accent);
             z-index: 200;
             display: none;
@@ -925,6 +925,10 @@
             }
             #playlists-container { max-height: none !important; flex: 1; }
             .online-badge { display: none; }
+            .net-label { display: none; }
+            .net-status { padding: 8px 10px; }
+            .source-btn span { display: none; }
+            .source-btn { padding: 6px 10px; }
             .control-buttons { gap: 12px; }
             .player-info { width: auto; flex: 1; }
             .player-controls { width: auto; flex: 0 0 auto; }
@@ -1066,8 +1070,79 @@
         /* Accessibilite : mouvement reduit */
         @media (prefers-reduced-motion: reduce) {
             .ambient span { animation: none; }
+            .net-status .net-dot { animation: none !important; }
             .brand-logo.playing, .player-cover, .song-row, .queue-item { animation: none !important; }
         }
+        /* SELECTEUR DE SOURCE EN LIGNE */
+        .source-toggle {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--input-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 4px;
+            flex-shrink: 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.18);
+        }
+        .source-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: 14px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+        .source-btn i { font-size: 0.95rem; }
+        .source-btn:hover { color: var(--text-main); }
+        .source-btn.active {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 0 12px var(--accent-glow);
+        }
+
+        /* STATUT DE CONNEXION INTERNET */
+        .net-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--input-bg);
+            border: 1px solid var(--glass-border);
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            cursor: default;
+            flex-shrink: 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.18);
+        }
+        .net-dot {
+            width: 9px; height: 9px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            flex-shrink: 0;
+        }
+        .net-status.net-online .net-dot {
+            background: #22c55e;
+            animation: net-pulse 2.4s ease-in-out infinite;
+        }
+        .net-status.net-limited .net-dot { background: #f59e0b; }
+        .net-status.net-limited { color: #f59e0b; }
+        .net-status.net-offline .net-dot { background: var(--danger); }
+        .net-status.net-offline { color: var(--danger); border-color: rgba(239, 68, 68, 0.45); }
+        @keyframes net-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+            50%      { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); }
+        }
+
         /* EXPLORATION EN LIGNE */
         .online-loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 1rem; }
         .online-loading i { margin-right: 8px; color: var(--accent); }
@@ -1139,6 +1214,13 @@
                     <h1 id="view-title">Toutes les pistes</h1>
                 </div>
                 <div class="header-controls">
+                    <div class="net-status" id="net-status" title="Etat de la connexion internet">
+                        <span class="net-dot"></span><span class="net-label" id="net-label">Connexion...</span>
+                    </div>
+                    <div class="source-toggle" id="source-toggle" style="display:none;">
+                        <button class="source-btn active" id="src-youtube" onclick="setOnlineSource('youtube')" title="Catalogue complet YouTube"><i class="fab fa-youtube"></i><span>YouTube</span></button>
+                        <button class="source-btn" id="src-audius" onclick="setOnlineSource('audius')" title="Musique libre Audius"><i class="fas fa-fire"></i><span>Audius</span></button>
+                    </div>
                     <div class="search-wrapper">
                         <i class="fas fa-search search-icon"></i>
                         <input type="text" id="search-input" class="search-bar" placeholder="Rechercher..." onkeyup="handleSearch()">
@@ -1402,10 +1484,11 @@
             }
             const isOnline = currentView === 'online';
             document.getElementById('search-input').placeholder =
-                isOnline ? 'Rechercher sur Audius...' : 'Rechercher...';
+                isOnline ? (onlineSource === 'youtube' ? 'Rechercher sur YouTube...' : 'Rechercher sur Audius...') : 'Rechercher...';
             // Correction de l'inversion : filtre et tri caches UNIQUEMENT en ligne
             document.getElementById('search-type').style.display = isOnline ? 'none' : '';
             document.getElementById('sort-select').style.display = isOnline ? 'none' : '';
+            document.getElementById('source-toggle').style.display = isOnline ? 'flex' : 'none';
             if (isOnline) {
                 onlineSearched = false;
                 loadTrendingOnline();
@@ -1544,6 +1627,7 @@
         // =============================================================
         function playSong(path, title, artist) {
             if (currentPlayingPath === path) { togglePlayPause(); return; }
+            currentOnlineId = null;
             currentPlayingPath = path;
             currentPlayingName = title;
             currentPlayingArtist = artist || "—";
@@ -1597,11 +1681,22 @@
             else brandIcon.classList.remove('playing');
         }
 
+        function playQueueItem(s) {
+            if (s.online) playOnlineTrack(s, queueCurrentIndex);
+            else playSong(s.path, s.title, s.artist);
+        }
         function playNext() {
             if (queue.length > 0 && queueCurrentIndex + 1 < queue.length) {
                 queueCurrentIndex++;
-                const s = queue[queueCurrentIndex];
-                playSong(s.path, s.title, s.artist);
+                playQueueItem(queue[queueCurrentIndex]);
+                return;
+            }
+            // Enchainement des resultats en ligne (tendances ou recherche)
+            if (currentPlayingPath && currentPlayingPath.indexOf('online:') === 0 && onlineResults.length > 0) {
+                let idx = onlineResults.findIndex(x => x.id === currentOnlineId);
+                idx = (idx === -1 || idx + 1 >= onlineResults.length) ? 0 : idx + 1;
+                if (isShuffle) idx = Math.floor(Math.random() * onlineResults.length);
+                playOnlineTrack(onlineResults[idx]);
                 return;
             }
             if (displayedSongs.length === 0) return;
@@ -1621,6 +1716,11 @@
             }
         }
         function playPrev() {
+            if (queueCurrentIndex > 0) {
+                queueCurrentIndex--;
+                playQueueItem(queue[queueCurrentIndex]);
+                return;
+            }
             if (displayedSongs.length === 0) return;
             const idx = displayedSongs.findIndex(s => s.path === currentPlayingPath);
             if (idx > 0) {
@@ -1650,16 +1750,42 @@
                 document.getElementById('now-playing-time').innerText = fmt(audioPlayer.currentTime) + ' / ' + fmt(audioPlayer.duration);
             }
         });
-        audioPlayer.addEventListener('play', updateWaveAnimation);
-        audioPlayer.addEventListener('pause', updateWaveAnimation);
+        audioPlayer.addEventListener('play', () => { updateWaveAnimation(); updatePlayBtnUI(); });
+        audioPlayer.addEventListener('pause', () => { updateWaveAnimation(); updatePlayBtnUI(); });
         audioPlayer.addEventListener('ended', () => {
             updateWaveAnimation();
             if (!isRepeat) playNext();
         });
+        var audioResetPending = false;
         audioPlayer.addEventListener('error', () => {
-            console.warn("Fichier corrompu, passage a la piste suivante.");
             updateWaveAnimation();
-            if (!isRepeat) playNext();
+            const isOnline = currentPlayingPath && currentPlayingPath.indexOf('online:') === 0;
+            if (!isOnline) {
+                console.warn("Piste locale illisible, passage a la suivante.");
+                if (!isRepeat) playNext();
+                return;
+            }
+            // Flux en ligne en echec : reinitialisation du lecteur SANS cascade
+            // (un src casse re-emet des erreurs ; la pre-verification de
+            // playOnlineTrack affiche deja le message exact du serveur).
+            if (audioResetPending) { audioResetPending = false; return; }
+            audioResetPending = true;
+            const failedSrc = audioPlayer.currentSrc;
+            audioPlayer.removeAttribute('src');
+            audioPlayer.load();
+            currentPlayingPath = null;
+            currentOnlineId = null;
+            document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
+            // Recupere le message exact du serveur (2 octets seulement : Range 0-1)
+            if (failedSrc) {
+                fetch(failedSrc, { headers: { 'Range': 'bytes=0-1' } })
+                    .then(r => r.ok ? Promise.reject(new Error('flux ok')) : r.json())
+                    .then(d => notifyOnline(d.error || 'Cette musique ne peut pas etre lue pour le moment. Reessayez.', true))
+                    .catch(e => {
+                        if (e && e.message === 'flux ok') return;
+                        if (netStatus.online === false) notifyOnline('Vous etes hors ligne. La lecture reprendra au retour de la connexion.', true);
+                    });
+            }
         });
 
         function seek(event) {
@@ -1672,8 +1798,8 @@
         // =============================================================
         // QUEUE
         // =============================================================
-        function addToQueue(song, playNext = false) {
-            if (playNext) {
+        function addToQueue(song, front = false) {
+            if (front) {
                 queue.splice(queueCurrentIndex + 1, 0, song);
             } else {
                 queue.push(song);
@@ -2077,7 +2203,7 @@
             if (titleEl) {
                 titleEl.innerHTML = isError
                     ? '<i class="fas fa-triangle-exclamation"></i> Erreur'
-                    : '<i class="fas fa-check-circle"></i> Import reussi';
+                    : '<i class="fas fa-circle-check"></i> Telechargement';
             }
             msgEl.textContent = msg;
             toast.classList.add('show');
@@ -2096,6 +2222,30 @@
                 '<i class="fas fa-triangle-exclamation"></i>' + escapeHtml(text) + '</div>';
         }
 
+        // =============================================================
+        // SOURCE EN LIGNE : YouTube (catalogue complet) ou Audius (libre)
+        // =============================================================
+        var onlineSource = 'youtube';
+        var YT_DEFAULT_QUERY = 'musique tendance';
+        var onlineReqId = 0;   // invalide les reponses arrivees apres une requete plus recente
+
+        function setOnlineSource(src) {
+            if (onlineSource === src) return;
+            onlineSource = src;
+            document.getElementById('src-youtube').classList.toggle('active', src === 'youtube');
+            document.getElementById('src-audius').classList.toggle('active', src === 'audius');
+            document.getElementById('search-input').placeholder =
+                src === 'youtube' ? 'Rechercher sur YouTube...' : 'Rechercher sur Audius...';
+            if (currentView === 'online') loadTrendingOnline();
+        }
+
+        function formatViews(n) {
+            if (n === null || n === undefined) return '';
+            if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + ' M vues';
+            if (n >= 1000) return Math.round(n / 1000) + ' k vues';
+            return n + ' vues';
+        }
+
         async function doOnlineSearch() {
             const q = document.getElementById('search-input').value.trim();
             clearTimeout(onlineSearchTimer);
@@ -2108,13 +2258,17 @@
 
         async function runOnlineSearch(q) {
             if (currentView !== 'online') return;
+            const myId = ++onlineReqId;
             onlineQuery = q;
             onlineSearched = true;
-            onlineLoading('Recherche de « ' + q + ' » sur Audius...');
+            const isYt = onlineSource === 'youtube';
+            onlineLoading('Recherche de « ' + q + ' » sur ' + (isYt ? 'YouTube' : 'Audius') + '...');
             try {
-                const res = await fetch('/api/search_online?q=' + encodeURIComponent(q));
+                const url = isYt ? '/api/search_youtube?q=' : '/api/search_online?q=';
+                const res = await fetch(url + encodeURIComponent(q));
                 const data = await res.json();
-                if (currentView !== 'online') return;
+                if (myId !== onlineReqId || currentView !== 'online') return;
+                if (data.error) throw new Error(data.error);
                 onlineResults = data.results || [];
                 if (!onlineResults.length) {
                     trackList.innerHTML =
@@ -2124,26 +2278,38 @@
                 }
                 renderOnlineResults();
             } catch (e) {
-                if (currentView !== 'online') return;
-                onlineError('Erreur reseau pendant la recherche');
+                if (myId !== onlineReqId || currentView !== 'online') return;
+                onlineError(e.message || 'Erreur reseau pendant la recherche');
             }
         }
 
         async function loadTrendingOnline() {
             if (currentView !== 'online') return;
+            const myId = ++onlineReqId;
             onlineQuery = "";
             onlineSearched = false;
-            onlineLoading('Chargement des tendances Audius...');
             try {
-                const res = await fetch('/api/trending_online');
-                const data = await res.json();
-                if (currentView !== 'online') return;
+                let data;
+                if (onlineSource === 'youtube') {
+                    onlineLoading('Chargement des tendances YouTube...');
+                    const res = await fetch('/api/search_youtube?q=' + encodeURIComponent(YT_DEFAULT_QUERY));
+                    data = await res.json();
+                } else {
+                    onlineLoading('Chargement des tendances Audius...');
+                    const res = await fetch('/api/trending_online');
+                    data = await res.json();
+                }
+                if (myId !== onlineReqId || currentView !== 'online') return;
                 if (data.error) throw new Error(data.error);
                 onlineResults = data.results || [];
                 renderOnlineResults();
             } catch (e) {
-                if (currentView !== 'online') return;
-                onlineError(e.message || 'Audius injoignable');
+                if (myId !== onlineReqId || currentView !== 'online') return;
+                if (netStatus.online === false) {
+                    onlineError('Pas de connexion internet. La pastille en haut a droite passera au vert quand ce sera revenu.');
+                } else {
+                    onlineError(e.message || 'Source en ligne injoignable');
+                }
             }
         }
 
@@ -2151,14 +2317,17 @@
             trackList.innerHTML = '';
             const head = document.createElement('div');
             head.className = 'group-header';
+            const srcLabel = onlineSource === 'youtube' ? 'Tendances YouTube' : 'Tendances Audius';
+            const srcIcon = onlineSource === 'youtube' ? 'fab fa-youtube' : 'fas fa-fire';
             head.innerHTML = onlineSearched
                 ? '<i class="fas fa-magnifying-glass"></i><h3>' + escapeHtml(onlineQuery) + '</h3><span>' +
                 onlineResults.length + ' resultat' + (onlineResults.length > 1 ? 's' : '') + '</span>'
-                : '<i class="fas fa-fire"></i><h3>Tendances Audius</h3><span>' +
-                onlineResults.length + ' titre' + (onlineResults.length > 1 ? 's' : '') + ' libres</span>';
+                : '<i class="' + srcIcon + '"></i><h3>' + srcLabel + '</h3><span>' +
+                onlineResults.length + ' titre' + (onlineResults.length > 1 ? 's' : '') + (onlineSource === 'youtube' ? '' : ' libres') + '</span>';
             trackList.appendChild(head);
 
             onlineResults.forEach((r, idx) => {
+                r._src = r._src || r.source || 'audius';
                 const row = document.createElement('div');
                 row.className = 'song-row' + (r.id === currentOnlineId ? ' playing' : '');
                 row.id = 'online-row-' + r.id;
@@ -2168,7 +2337,8 @@
                     ? '<img class="song-cover-thumb" src="' + escapeHtml(r.artwork) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
                     : '<div class="song-cover-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);"><i class="fas fa-music"></i></div>';
 
-                const meta = [r.artist, r.genre, formatOnlineDuration(r.duration)].filter(Boolean).join(' • ');
+                const meta = [r.artist, r._src === 'youtube' ? formatViews(r.views) : r.genre,
+                              formatOnlineDuration(r.duration)].filter(Boolean).join(' • ');
 
                 row.innerHTML =
                     art +
@@ -2177,51 +2347,103 @@
                         '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(r.title) + '</div>' +
                         '<div class="song-meta" style="margin-left:0;">' + escapeHtml(meta) + '</div>' +
                     '</div>' +
-                    '<span class="online-badge">En ligne</span>' +
+                    '<span class="online-badge">' + (r._src === 'youtube' ? 'YouTube' : 'En ligne') + '</span>' +
                     '<div class="song-actions">' +
-                        '<button class="action-btn" id="dl-' + r.id + '" title="Telecharger dans ~/Musique/Musiques/"><i class="fas fa-download"></i></button>' +
+                        '<button class="action-btn nq-btn" title="Ecouter ensuite"><i class="fas fa-step-forward"></i></button>' +
+                        '<button class="action-btn dl-btn" title="Telecharger dans votre dossier de musique"><i class="fas fa-download"></i></button>' +
                     '</div>';
 
-                const play = () => playOnline(r);
+                const play = () => playOnlineTrack(r);
                 row.querySelector('.song-play-btn').addEventListener('click', play);
                 row.querySelector('.song-info').addEventListener('click', play);
-                row.querySelector('#dl-' + r.id).addEventListener('click', () => downloadOnlineTrack(r));
+                row.querySelector('.nq-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    addToQueue({ online: true, id: r.id, path: 'online:' + r.id,
+                                 title: r.title, artist: r.artist, artwork: r.artwork,
+                                 _src: r._src, views: r.views }, true);
+                });
+                row.querySelector('.dl-btn').addEventListener('click', () => downloadOnlineTrack(r));
                 trackList.appendChild(row);
             });
         }
 
-        function playOnline(r) {
-            currentOnlineId = r.id;
-            audioPlayer.src = '/api/stream_online/' + encodeURIComponent(r.id);
-            audioPlayer.play().catch(err => console.error('Lecture impossible :', err));
+        async function playOnlineTrack(r, qIdx = null) {
+            if (currentPlayingPath === 'online:' + r.id) { togglePlayPause(); return; }
+            const streamBase = r._src === 'youtube' ? '/api/stream_youtube/' : '/api/stream_online/';
+            const src = streamBase + encodeURIComponent(r.id);
 
             document.getElementById('now-playing-title').textContent = r.title;
             document.getElementById('now-playing-artist').textContent = r.artist + ' • En ligne';
+            document.getElementById('now-playing-time').textContent = 'Connexion au flux...';
+
+            // Pre-verification : 2 octets suffisent a valider le flux et a
+            // recuperer le message d'erreur exact du serveur (ex. verification
+            // YouTube). Sans ca, une erreur ferait cascader toute la liste.
+            let errMsg = null;
+            try {
+                const probe = await fetch(src, { headers: { 'Range': 'bytes=0-1' } });
+                if (!probe.ok) {
+                    const d = await probe.json().catch(() => ({}));
+                    errMsg = d.error || 'Cette musique ne peut pas etre lue pour le moment. Reessayez dans quelques instants.';
+                }
+            } catch (e) {
+                if (netStatus.online === false) errMsg = 'Vous etes hors ligne. La lecture reprendra au retour de la connexion.';
+            }
+            if (errMsg) {
+                notifyOnline(errMsg, true);
+                return;
+            }
+
+            currentOnlineId = r.id;
+            currentPlayingPath = 'online:' + r.id;
+            currentPlayingName = r.title;
+            currentPlayingArtist = r.artist;
+            if (qIdx !== null) {
+                queueCurrentIndex = qIdx;
+            } else {
+                const qi = queue.findIndex(s => s.online && s.id === r.id);
+                queueCurrentIndex = qi;
+            }
+            audioPlayer.src = src;
+            audioPlayer.play().catch(err => console.error('Lecture impossible :', err));
+
             document.getElementById('now-playing-time').textContent = 'Chargement...';
 
             const coverImg = document.getElementById('player-cover');
             const coverEmpty = document.getElementById('player-cover-empty');
+            const bgArtwork = document.getElementById('bg-artwork');
             if (r.artwork) {
                 coverImg.src = r.artwork;
                 coverImg.style.display = 'block';
                 coverEmpty.style.display = 'none';
+                bgArtwork.style.backgroundImage = "url('" + r.artwork + "')";
+                bgArtwork.classList.add('active');
             } else {
                 coverImg.style.display = 'none';
                 coverEmpty.style.display = 'flex';
+                bgArtwork.classList.remove('active');
             }
 
             document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
             const row = document.getElementById('online-row-' + r.id);
             if (row) row.classList.add('playing');
+            if (lyricsVisible) fetchLyrics(r.title);
+            updatePlayBtnUI();
         }
 
         async function downloadOnlineTrack(r) {
-            const btn = document.getElementById('dl-' + r.id);
+            if (netStatus.online === false) {
+                notifyOnline('Hors ligne : telechargement impossible', true);
+                return;
+            }
+            const rowEl = document.getElementById('online-row-' + r.id);
+            const btn = rowEl ? rowEl.querySelector('.dl-btn') : null;
             if (!btn || btn.disabled) return;
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             try {
-                const res = await fetch('/api/download_online', {
+                const endpoint = r._src === 'youtube' ? '/api/download_youtube' : '/api/download_online';
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: r.id, title: r.title, artist: r.artist, artwork: r.artwork })
@@ -2234,15 +2456,57 @@
                 } else {
                     btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
                     btn.disabled = false;
-                    notifyOnline('Echec : ' + (data.error || 'erreur inconnue'), true);
+                    notifyOnline(data.error || 'Le telechargement a echoue. Reessayez dans quelques minutes.', true);
                 }
             } catch (e) {
                 btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
                 btn.disabled = false;
-                notifyOnline('Erreur reseau pendant le telechargement', true);
+                notifyOnline('Le telechargement a ete interrompu. Verifiez votre connexion puis reessayez.', true);
             }
         }
         
+        // =============================================================
+        // STATUT DE CONNEXION INTERNET
+        // =============================================================
+        var netStatus = { online: null, audius_ok: false, youtube_ok: false };
+
+        function applyNetStatus(data) {
+            const wasOnline = netStatus.online;
+            netStatus = { online: !!data.online, audius_ok: !!data.audius_ok, youtube_ok: !!data.youtube_ok };
+            const pill = document.getElementById('net-status');
+            const label = document.getElementById('net-label');
+            if (!pill || !label) return;
+            pill.classList.remove('net-online', 'net-limited', 'net-offline');
+            if (netStatus.online && (netStatus.audius_ok || netStatus.youtube_ok)) {
+                pill.classList.add('net-online');
+                label.textContent = 'En ligne';
+            } else if (netStatus.online) {
+                pill.classList.add('net-limited');
+                label.textContent = 'Reseau limite';
+            } else {
+                pill.classList.add('net-offline');
+                label.textContent = 'Hors ligne';
+            }
+            // Retour de la connexion pendant la vue en ligne : recharger les tendances
+            if (wasOnline === false && netStatus.online && currentView === 'online') {
+                loadTrendingOnline();
+            }
+        }
+
+        async function refreshNetStatus() {
+            try {
+                const res = await fetch('/api/connection_status');
+                const data = await res.json();
+                applyNetStatus(data);
+            } catch (e) {
+                applyNetStatus({ online: false, audius_ok: false, youtube_ok: false });
+            }
+        }
+        window.addEventListener('online', refreshNetStatus);
+        window.addEventListener('offline', () => applyNetStatus({ online: false, audius_ok: false, youtube_ok: false }));
+        setInterval(refreshNetStatus, 15000);
+        refreshNetStatus();
+
         // =============================================================
         // LIQUID GLASS — reflet suivant le curseur
         // =============================================================

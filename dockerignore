@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.db
+resonance.db*
+resonance_data.json*
+.smoke*
+.git/
+.gitignore
+*.md
+cookies.txt
+Dockerfile
+docker-compose.yml
