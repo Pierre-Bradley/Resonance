@@ -12,7 +12,7 @@ services:
       - ${HOME}/Musique:/music
       # Base de donnees (favoris, playlists) persistante :
       - resonance-data:/data
-      # FICHIER COOKIES — a activer SEULEMENT si YouTube bloque votre serveur
+      # FICHIER COOKIES — a activer SEULEMENT si YouTube bloque le serveur
       # (message "YouTube a bloque votre serveur"). Trois etapes :
       #   1) connectez-vous a YouTube dans votre navigateur
       #   2) installez l'extension "Get cookies.txt LOCALLY" et exportez cookies.txt

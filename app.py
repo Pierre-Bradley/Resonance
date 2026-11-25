@@ -1,10 +1,12 @@
 import re
 import os
+import json
 import time
 import shutil
 import tempfile
 import threading
 import sqlite3
+import hashlib
 import requests
 from flask import Flask, render_template, jsonify, send_file, request, Response, stream_with_context
 from werkzeug.utils import secure_filename
@@ -66,12 +68,24 @@ def _safe_path(subpath):
 def get_db():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
+    # Attendre la methode posee par l'autre processus au lieu d'echouer en
+    # "database is locked" (les 2 workers gunicorn partagent la base).
+    conn.execute("PRAGMA busy_timeout=3000")
     return conn
 
 
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
+    # Mode d'ecriture anticipee (jalon 3.5) : lecteurs et ecrivain coexistent
+    # sans verrou exclusif, ce qui supprime la majorite des verrouillages
+    # entre les deux processus gunicorn. Propriete persistante du fichier.
+    # Certains systemes de fichiers (NFS, volumes reseau...) refusent le WAL :
+    # on garde alors le mode par defaut plutot que de faire planter le serveur.
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS favorites (path TEXT PRIMARY KEY)
     """)
@@ -96,11 +110,54 @@ def init_db():
             fetched_at INTEGER
         )
     """)
+    # Titres pose la par l'application (telechargements) : le client les met
+    # automatiquement en cache hors ligne du navigateur — jouables a tout
+    # moment, meme serveur injoignable (le bouton punaise a disparu).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS downloaded_files (
+            path TEXT PRIMARY KEY
+        )
+    """)
     # Cache lyrics : les resultats negatifs ne sont gardes que 24h
     cursor.execute("DELETE FROM lyrics_cache WHERE fetched_at < ?", (int(time.time()) - 86400,))
     conn.commit()
     conn.close()
     migrate_from_json()
+
+
+def _record_downloaded_file(rel_path):
+    """Memorise un telechargement reussi (chemin relatif au dossier musical)
+    pour que la bibliotheque le marque `downloaded` et que le client le
+    rende disponible hors ligne sans aucune action de l'utilisateur."""
+    if not rel_path:
+        return
+    try:
+        conn = get_db()
+        conn.execute("INSERT OR IGNORE INTO downloaded_files (path) VALUES (?)", (rel_path,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
+def _backfill_downloaded_files():
+    """Les telechargements anterieurs a la table downloaded_files sont
+    retrouves dans le journal des taches (persistant, a cote de la base) :
+    ils profitent eux aussi du hors ligne automatique."""
+    jobs = _load_jobs()
+    for job in jobs.values():
+        if job.get('status') == 'done' and job.get('file'):
+            _record_downloaded_file(os.path.basename(job['file']))
+
+
+def _downloaded_files_set():
+    try:
+        conn = get_db()
+        rows = conn.execute("SELECT path FROM downloaded_files").fetchall()
+        conn.close()
+        return {r["path"] for r in rows}
+    except sqlite3.Error:
+        return set()
 
 
 def migrate_from_json():
@@ -227,6 +284,12 @@ def get_lyrics():
                         "plain": cached['plain'], "track": cached['track'],
                         "artist": cached['artist'], "source": "cache"})
 
+    # Serveur sans Internet : on echoue vite (le cache ci-dessus reste
+    # servi), pour ne pas pendre dans un worker a chaque changement de piste.
+    if _internet_known_down():
+        return jsonify({"success": False,
+                        "error": "Serveur sans Internet : paroles indisponibles."}), 503
+
     if cache_key in _lyrics_pending:
         return jsonify({"success": False, "error": "Recherche en cours, reessayez dans un instant."}), 429
     _lyrics_pending.add(cache_key)
@@ -293,6 +356,8 @@ def get_clip():
     # Retourne l'ID du clip YouTube pour le morceau en cours.
     # Ordre : id YouTube connu (piste jouee depuis YouTube) > recherche
     # "artiste titre clip officiel" > recherche simple. Fallback UI : pochette.
+    if _internet_known_down():
+        return jsonify({"success": False, "error": "Serveur sans Internet : clip indisponible."}), 503
     if not YTDLP_AVAILABLE:
         return jsonify({"success": False, "error": "yt-dlp non installe"}), 500
     data = request.json or {}
@@ -353,6 +418,8 @@ def stream_video(video_id):
     # Proxy du flux VIDEO YouTube (avec son) : same-origin, seek via Range.
     if not re.match(r'^[A-Za-z0-9_-]{6,20}$', video_id):
         return jsonify({"error": "ID invalide"}), 400
+    if _internet_known_down():
+        return jsonify({"error": "Le serveur n'a pas d'acces Internet : clip indisponible."}), 503
     if not YTDLP_AVAILABLE:
         return jsonify({"error": "yt-dlp non installe"}), 500
     try:
@@ -648,10 +715,27 @@ def save_metadata(file_path, title, artist, album, genre):
 # SCAN
 # =============================================================================
 
+# Cache du scan : l'interface interroge /api/state toutes les 5 s. Relire les
+# tags de chaque fichier a chaque sondage etait couteux (ouverture + analyse
+# de chaque audio). On memorise donc, par fichier, son empreinte (mtime_ns +
+# taille) et ses metadonnees deja extraites : seuls les fichiers nouveaux ou
+# modifies sont relus, le balayage du dossier reste lui integral a chaque appel.
+_scan_cache = {}           # chemin absolu -> {"mtime_ns", "size", "song"}
+_scan_lock = threading.Lock()
+
+
+def _clear_scan_cache():
+    """Invalide le cache (apres edition de tags ou import de fichiers)."""
+    with _scan_lock:
+        _scan_cache.clear()
+
+
 def get_all_songs(directory):
     # Balayage du dossier musical : un fichier illisible (telechargement en
     # cours, tags corrompus...) ne doit jamais casser la bibliotheque entiere.
     music_files = []
+    current_files = {}
+    downloaded = _downloaded_files_set()
     for root, dirs, files in os.walk(directory, onerror=lambda e: None):
         for file in files:
             if not file.lower().endswith(('.mp3', '.wav', '.ogg', '.flac', '.m4a')):
@@ -659,7 +743,21 @@ def get_all_songs(directory):
             full_path = os.path.join(root, file)
             rel_path = os.path.relpath(full_path, directory).replace('\\', '/')
             try:
-                mtime = os.path.getmtime(full_path)
+                st = os.stat(full_path)
+                fingerprint = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                continue   # fichier momentanement illisible : ignore, sans faire planter l'etat
+            cached = _scan_cache.get(full_path)
+            if cached and cached["fingerprint"] == fingerprint:
+                # Fichier inchange depuis la derniere lecture : metadonnees
+                # deja extraites, on ne relit pas les tags.
+                song = dict(cached["song"])
+                song["mtime"] = st.st_mtime
+                song["downloaded"] = rel_path in downloaded
+                current_files[full_path] = (fingerprint, song)
+                music_files.append(song)
+                continue
+            try:
                 meta = extract_metadata(full_path)
             except Exception:
                 continue   # fichier momentanement illisible : ignore, sans faire planter l'etat
@@ -668,17 +766,27 @@ def get_all_songs(directory):
                 # cours — pas une musique jouable, on ne l'affiche pas.
                 continue
             display_title = meta["title"] or os.path.splitext(file)[0]
-            music_files.append({
+            song = {
                 "name": file,
                 "path": rel_path,
-                "mtime": mtime,
+                "mtime": st.st_mtime,
                 "title": display_title,
                 "artist": meta["artist"] or "Artiste inconnu",
                 "album": meta["album"] or "Album inconnu",
                 "genre": meta["genre"] or "Genre inconnu",
                 "duration": meta["duration"],
-                "has_cover": meta["has_cover"]
-            })
+                "has_cover": meta["has_cover"],
+                "size": st.st_size,
+                "downloaded": rel_path in downloaded
+            }
+            current_files[full_path] = (fingerprint, song)
+            music_files.append(song)
+    # Remplace le cache par l'etat exact du dossier : les fichiers disparus
+    # ou devenus illisibles ne restent pas en memoire.
+    with _scan_lock:
+        _scan_cache.clear()
+        for full_path, (fingerprint, song) in current_files.items():
+            _scan_cache[full_path] = {"fingerprint": fingerprint, "song": song}
     return music_files
 
 
@@ -699,40 +807,109 @@ MANIFEST = {
 }
 
 SW_CODE = """
-const CACHE_NAME = 'resonance-v8';
+// RESONANCE v9.1 — caches plafonnes ; page en reseau-d'abord (maj SW forcee)
+// - STATIQUE : app shell, petite taille, remplace a chaque activation.
+// - MEDIAS : streams + pochettes, plafond en octets + eviction du plus
+//   ancien ; seuls les favoris y sont inscrits (demande explicite de
+//   l'utilisateur), les titres ordinaires ne remplissent plus le stockage.
+const CACHE_STATIC = 'resonance-static-v9';
+const CACHE_MEDIA = 'resonance-media-v9';
 const STATIC_URLS = ['/'];
+const MEDIA_MAX_BYTES = 512 * 1024 * 1024;   // 512 Mo par defaut
+const MEDIA_TARGET_BYTES = 448 * 1024 * 1024;   // cible apres eviction
 
 self.addEventListener('install', (event) => {
-    event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_URLS)));
+    event.waitUntil(caches.open(CACHE_STATIC).then((cache) => cache.addAll(STATIC_URLS)));
     self.skipWaiting();
 });
 
+async function trimMediaCache() {
+    // Garde le cache medias sous la cible : supprime du plus ancien utilise.
+    const cache = await caches.open(CACHE_MEDIA);
+    const keys = await cache.keys();
+    let total = 0;
+    const entries = [];
+    for (const req of keys) {
+        try {
+            const resp = await cache.match(req);
+            if (!resp) continue;
+            const len = +(resp.headers.get('content-length') || 0);
+            entries.push({ req, len });
+            total += len;
+        } catch (e) { /* reponse evictable sans lecture */ }
+    }
+    if (total <= MEDIA_TARGET_BYTES) return;
+    entries.sort((a, b) => b.len - a.len);   // on retire d'abord les plus gros
+    for (const e of entries) {
+        if (total <= MEDIA_TARGET_BYTES) break;
+        await cache.delete(e.req);
+        total -= e.len;
+    }
+}
+
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((keys) =>
-            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-        ).then(() => self.clients.claim())
+        caches.keys()
+            .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_STATIC && k !== CACHE_MEDIA).map((k) => caches.delete(k))))
+            .then(() => self.clients.claim())
     );
 });
+
+// Message client -> SW : gestion du cache hors ligne d'un titre
+self.addEventListener('message', (event) => {
+    const msg = event.data || {};
+    if (msg.type === 'PIN_TRACK' && msg.streamUrl) {
+        event.waitUntil((async () => {
+            const cache = await caches.open(CACHE_MEDIA);
+            const coverUrl = msg.coverUrl || null;
+            const targets = [new Request(msg.streamUrl, { credentials: 'same-origin' })];
+            if (coverUrl) targets.push(new Request(coverUrl, { credentials: 'same-origin' }));
+            for (const req of targets) {
+                try {
+                    const resp = await fetch(req);
+                    if (resp && resp.status === 200) await cache.put(req, resp);
+                } catch (e) { /* hors ligne : la prochaine tentative rependra */ }
+            }
+            await trimMediaCache();
+            const clients = await self.clients.matchAll();
+            for (const c of clients) c.postMessage({ type: 'MEDIA_CACHED', path: msg.path || null });
+        })());
+    } else if (msg.type === 'UNPIN_TRACK' && msg.streamUrl) {
+        event.waitUntil((async () => {
+            const cache = await caches.open(CACHE_MEDIA);
+            await cache.delete(new Request(msg.streamUrl, { credentials: 'same-origin' }));
+            const coverUrl = msg.coverUrl || null;
+            if (coverUrl) await cache.delete(new Request(coverUrl, { credentials: 'same-origin' }));
+        })());
+    } else if (msg.type === 'CLEAR_MEDIA_CACHE') {
+        event.waitUntil(caches.delete(CACHE_MEDIA));
+    }
+});
+
+async function handleMediaRequest(request) {
+    // Cache-first : les flux/pochettes en cache restent jouables hors ligne
+    // (lecture, intervalles reseau, progres de telechargement).
+    const cached = await caches.match(request, { cacheName: CACHE_MEDIA });
+    if (cached) return cached;
+    const resp = await fetch(request);
+    // Seuls les favoris/pinned entrent dans le cache (inscription via
+    // PIN_TRACK) : un titre ordinaire ecoute en ligne ne remplit plus
+    // le stockage du navigateur.
+    return resp;
+}
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
     if (event.request.method !== 'GET') return;
 
-    // Couvertures + streams locaux : cache-first (ecoute hors-ligne)
+    // Couvertures + streams locaux : cache-first (ecoute hors-ligne des
+    // titres explicitement mis en cache ; les autres ne sont pas stockes)
     if (url.pathname.startsWith('/api/cover/') || url.pathname.startsWith('/stream/')) {
-        event.respondWith(
-            caches.match(event.request).then((cached) => cached || fetch(event.request).then((resp) => {
-                if (resp.status === 200) {
-                    const clone = resp.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-                }
-                return resp;
-            }))
-        );
+        event.respondWith(handleMediaRequest(event.request).catch(() => new Response('', { status: 504 })));
         return;
     }
-    // Etat de l'app : reseau d'abord
+    // Etat de l'app : reseau d'abord (les 304 ETag rendent le sondage peu
+    // couteux, le cache ne sert qu'au premier affichage hors ligne)
     if (url.pathname === '/api/state') {
         event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
         return;
@@ -740,7 +917,20 @@ self.addEventListener('fetch', (event) => {
     // Autres API (recherche/stream en ligne...) : ne pas intercepter
     if (url.pathname.startsWith('/api/')) return;
 
-    // Page et statique : cache-first
+    // Page (navigation) : reseau d'abord puis mise a jour du cache, repli
+    // sur le cache hors ligne. Garantit qu'un index.html re-deploye est
+    // servi des la premiere visite en ligne (pas de page figee par le SW).
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).then((resp) => {
+                const copy = resp.clone();
+                caches.open(CACHE_STATIC).then((c) => c.put('/', copy));
+                return resp;
+            }).catch(() => caches.match('/'))
+        );
+        return;
+    }
+    // Autres fichiers statiques : cache-first
     event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });
 """
@@ -768,12 +958,25 @@ def service_worker():
 @app.route('/api/state')
 def get_state():
     songs = get_all_songs(MUSIC_DIR)
-    return jsonify({
+    favorites = get_favorites()
+    playlists = get_playlists()
+    # ETag : couvre bibliotheque + favoris + playlists. Le sondage de 5 s
+    # renvoie l'empreinte qu'il connait ; si rien n'a bouge, reponse 304
+    # vide (aucun JSON transfere) au lieu de retélécharger toute la bibliotheque.
+    etag_source = json.dumps({"songs": songs, "favorites": favorites,
+                              "playlists": playlists},
+                             sort_keys=True, ensure_ascii=False)
+    etag = hashlib.md5(etag_source.encode("utf-8", "replace")).hexdigest()
+    if request.headers.get('If-None-Match') in (etag, f'"{etag}"'):
+        return '', 304, {'ETag': etag}
+    response = jsonify({
         "songs": songs,
-        "favorites": get_favorites(),
-        "playlists": get_playlists(),
+        "favorites": favorites,
+        "playlists": playlists,
         "music_dir": MUSIC_DIR
     })
+    response.set_etag(etag)
+    return response
 
 
 @app.route('/api/cover/<path:subpath>')
@@ -833,6 +1036,35 @@ def delete_playlist():
     return jsonify({"success": False}), 404
 
 
+@app.route('/api/delete_song', methods=['POST'])
+def delete_song():
+    """Supprime definitivement un titre : le fichier (jalon 3.5, bouton
+    supprimer) + ses references en base (favoris, playlists) ; le cache de
+    scan est purge pour que le titre disparaisse aussitot de la bibliotheque.
+    Le chemin doit rester strictement dans le dossier de musique."""
+    path = ((request.json or {}).get('path') or '').strip()
+    if not path:
+        return jsonify({"success": False, "error": "Chemin manquant"}), 400
+    safe = _safe_path(path)
+    if safe is None or not os.path.isfile(safe):
+        return jsonify({"success": False, "error": "Fichier introuvable ou acces refuse"}), 404
+    try:
+        os.remove(safe)
+    except OSError as e:
+        return jsonify({"success": False, "error": f"Suppression impossible : {e}"}), 500
+    try:
+        conn = get_db()
+        conn.execute("DELETE FROM favorites WHERE path = ?", (path,))
+        conn.execute("DELETE FROM playlist_songs WHERE song_path = ?", (path,))
+        conn.execute("DELETE FROM downloaded_files WHERE path = ?", (path,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        pass   # references orphelines possibles, le fichier est quand meme parti
+    _clear_scan_cache()
+    return jsonify({"success": True})
+
+
 @app.route('/api/toggle_playlist_song', methods=['POST'])
 def toggle_playlist_song():
     playlist_name = request.json.get('playlist')
@@ -871,6 +1103,7 @@ def import_files():
                     dest = os.path.join(MUSIC_DIR, f"{base}_{counter}{ext}")
                     counter += 1
             f.save(dest)
+            _clear_scan_cache()   # nouveau fichier : invalidation du cache de scan
             saved.append(os.path.basename(dest))
     return jsonify({"success": True, "saved": saved, "count": len(saved)})
 
@@ -895,6 +1128,7 @@ def update_metadata():
         return jsonify({"success": False, "error": "mutagen non installe"}), 500
     ok = save_metadata(safe, title, artist, album, genre)
     if ok:
+        _clear_scan_cache()   # tags modifies : invalidation du cache de scan
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Format non supporte pour l'ecriture"}), 400
 
@@ -913,50 +1147,96 @@ _audius_host = None
 # =============================================================================
 
 _net_lock = threading.Lock()
-_net_cache = {"ts": 0.0, "online": False, "audius_ok": False, "youtube_ok": False}
+_net_probe_lock = threading.Lock()
+# online=None : aucune sonde n'a encore abouti (etat inconnu, non "hors ligne")
+_net_cache = {"ts": 0.0, "online": None, "audius_ok": False, "youtube_ok": False}
+_NET_TTL = 20.0             # duree de validite du dernier etat connu (s)
+_net_probe_thread = None
+# URL de la sonde "Internet global" : surchageable (test, reseaux particuliers
+# ou deploiement air-gap ou l'on veut sonder la passerelle locale).
+_NET_PROBE_URL = os.environ.get('RESONANCE_PROBE_INTERNET',
+                                'https://www.gstatic.com/generate_204')
 
 
-def _check_internet():
-    # Verifie la connectivite internet (resultat en cache 10 s).
+def _probe_internet():
+    # Sondes reelles (3 s max chacune). Elles tournent dans un thread de
+    # fond : sur un serveur PRIVE D'INTERNET, la resolution DNS peut pendre
+    # bien au-dela du timeout requests — si ces appels avaient lieu dans un
+    # worker, ils affameraient les 2 workers gunicorn et la lecture locale
+    # mettrait plus d'une minute a demarrer (bug constanne).
     global _audius_host
+    online = False
+    try:
+        r = requests.get(_NET_PROBE_URL, timeout=3)
+        online = (r.status_code == 204)
+    except requests.RequestException:
+        pass
+
+    audius_ok = False
+    try:
+        r = requests.get('https://api.audius.co', timeout=3)
+        audius_ok = (r.status_code == 200)
+    except requests.RequestException:
+        pass
+    if not audius_ok:
+        _audius_host = None   # forcera une re-resolution au prochain appel
+
+    youtube_ok = False
+    try:
+        r = requests.head('https://www.youtube.com/generate_204', timeout=3, allow_redirects=True)
+        youtube_ok = (r.status_code == 204)
+    except requests.RequestException:
+        try:
+            r = requests.head('https://www.youtube.com', timeout=3, allow_redirects=True)
+            youtube_ok = (r.status_code == 200)
+        except requests.RequestException:
+            pass
+
     with _net_lock:
-        now = time.time()
-        if now - _net_cache["ts"] < 10:
-            return dict(_net_cache)
-
-        # Internet global : hote neutre
-        online = False
-        try:
-            r = requests.get('https://www.gstatic.com/generate_204', timeout=3)
-            online = (r.status_code == 204)
-        except requests.RequestException:
-            pass
-
-        audius_ok = False
-        try:
-            r = requests.get('https://api.audius.co', timeout=3)
-            audius_ok = (r.status_code == 200)
-        except requests.RequestException:
-            pass
-        if not audius_ok:
-            _audius_host = None   # forcera une re-resolution au prochain appel
-
-        youtube_ok = False
-        try:
-            r = requests.head('https://www.youtube.com/generate_204', timeout=3, allow_redirects=True)
-            youtube_ok = (r.status_code == 204)
-        except requests.RequestException:
-            try:
-                r = requests.head('https://www.youtube.com', timeout=3, allow_redirects=True)
-                youtube_ok = (r.status_code == 200)
-            except requests.RequestException:
-                pass
-
-        _net_cache["ts"] = now
+        _net_cache["ts"] = time.time()
         _net_cache["online"] = online
         _net_cache["audius_ok"] = audius_ok
         _net_cache["youtube_ok"] = youtube_ok
-        return dict(_net_cache)
+
+
+def _maybe_start_probe():
+    global _net_probe_thread
+    with _net_probe_lock:
+        if _net_probe_thread is not None and _net_probe_thread.is_alive():
+            return
+        _net_probe_thread = threading.Thread(
+            target=_probe_internet, daemon=True, name='res-net-probe')
+        _net_probe_thread.start()
+
+
+def _check_internet():
+    # Renvoie IMMEDIATEMENT le dernier etat connu (jamais de reseau dans un
+    # worker). Si l'information perime, une nouvelle sonde part en fond.
+    with _net_lock:
+        state = dict(_net_cache)
+    if time.time() - state["ts"] > _NET_TTL:
+        _maybe_start_probe()
+    return state
+
+
+def _internet_known_down(max_age=60.0):
+    # True : la derniere sonde (fraiche) dit que le serveur n'a pas
+    # d'Internet — les fonctions en ligne peuvent alors echouer vite au
+    # lieu de pendre sur le DNS dans un worker. L'etat est memoire par
+    # worker gunicorn : on relance une sonde quand il perime pour que le
+    # garde s'active aussi sur les workers qui ne recoivent pas le
+    # sondage /api/connection_status du navigateur.
+    with _net_lock:
+        state = dict(_net_cache)
+    if time.time() - state["ts"] > _NET_TTL:
+        _maybe_start_probe()
+    return state["online"] is False and (time.time() - state["ts"]) < max_age
+
+
+def _offline_503():
+    return jsonify({
+        "error": "Le serveur n'a pas d'acces Internet : fonction en ligne indisponible."
+    }), 503
 
 
 @app.route('/api/connection_status')
@@ -1017,6 +1297,8 @@ def search_online():
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({"results": []})
+    if _internet_known_down():
+        return _offline_503()
     try:
         host = get_audius_host()
         r = requests.get(
@@ -1032,6 +1314,8 @@ def search_online():
 
 @app.route('/api/trending_online')
 def trending_online():
+    if _internet_known_down():
+        return _offline_503()
     try:
         host = get_audius_host()
         r = requests.get(
@@ -1051,6 +1335,8 @@ def stream_online(track_id):
     l'egaliseur (Web Audio) et le seek fonctionnent."""
     if not re.match(r'^[A-Za-z0-9_-]{1,64}$', track_id):
         return jsonify({"error": "ID invalide"}), 400
+    if _internet_known_down():
+        return _offline_503()
 
     req_headers = {'User-Agent': 'Mozilla/5.0'}
     range_header = request.headers.get('Range')
@@ -1133,101 +1419,310 @@ def _tag_downloaded_file(path, title, artist, artwork_bytes=None):
             pass
 
 
+# =============================================================================
+# TELECHARGEMENTS EN ARRIERE-PLAN (jalon 3.3)
+# =============================================================================
+# Les telechargements s'executent dans un pool de threads : la requete HTTP
+# retourne immediatement un identifiant de tache (plus de blocage jusqu'au
+# timeout gunicorn de 300 s), l'etat et la progression sont exposes par
+# /api/download_status. L'etat est persiste dans un fichier JSON partage
+# parce que gunicorn tourne avec 2 processus : la tache creee par l'un doit
+# rester visible par l'autre, et fermer l'onglet ne perd ni le travail ni la
+# progression (un nouvel onglet re-attache les taches en cours).
+
+from concurrent.futures import ThreadPoolExecutor   # noqa: E402
+import uuid   # noqa: E402
+
+JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(DB_FILE)) or '.',
+                         'download_jobs.json')
+JOBS_LOCK = threading.Lock()
+JOBS_FINISHED_TTL = 1800     # taches terminees conservees 30 min pour l'affichage
+JOBS_STALE_S = 180           # telechargement sans mise a jour depuis 3 min => interrompu
+DOWNLOAD_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix='res-dl')
+
+try:
+    import yt_dlp as _yt_mod
+    _YT_DL_ERRORS = (_yt_mod.utils.DownloadError,)
+except Exception:                      # yt-dlp absent : la clause ne matchera rien
+    _YT_DL_ERRORS = ()
+
+
+def _pid_alive(pid):
+    """Un PID est-il vivant ? (le notre : oui par definition)"""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _load_jobs():
+    try:
+        with open(JOBS_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_jobs(jobs):
+    tmp = JOBS_FILE + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(jobs, f)
+        os.replace(tmp, JOBS_FILE)
+    except OSError:
+        pass
+
+
+def _prune_jobs(jobs):
+    now = time.time()
+    return {k: v for k, v in jobs.items()
+            if v.get('status') in ('queued', 'downloading', 'processing')
+            or now - v.get('updated', 0) < JOBS_FINISHED_TTL}
+
+
+def _update_job(job_id, **fields):
+    with JOBS_LOCK:
+        jobs = _load_jobs()
+        job = jobs.get(job_id)
+        if job is None:
+            return None
+        job.update(fields)
+        job['updated'] = time.time()
+        _save_jobs(jobs)
+        return job
+
+
+def _create_job(kind, target_key, title, artist):
+    """Cree une tache, ou reutilise celle deja en cours pour la meme piste
+    (double-clic, ou meme demande arrivee sur l'autre processus gunicorn).
+    Retourne (job, created) : created=False => ne pas soumettre au pool,
+    la tache existe deja quelque part et son propriétaire la fait tourner."""
+    with JOBS_LOCK:
+        jobs = _prune_jobs(_load_jobs())
+        for j in jobs.values():
+            if (j.get('target') == target_key
+                    and j.get('status') in ('queued', 'downloading', 'processing')):
+                return j, False
+        job_id = uuid.uuid4().hex[:12]
+        jobs[job_id] = {
+            'id': job_id, 'kind': kind, 'target': target_key,
+            'title': title, 'artist': artist,
+            'status': 'queued', 'percent': 0, 'speed': '', 'eta': '',
+            'error': '', 'file': '',
+            'created': time.time(), 'updated': time.time(),
+            'pid': os.getpid(),
+        }
+        _save_jobs(jobs)
+        return jobs[job_id], True
+
+
+def _job_view(job):
+    """Vue envoyee au client ; detecte une tache orpheline (processus mort)."""
+    now = time.time()
+    view = {k: job.get(k) for k in ('id', 'kind', 'title', 'artist', 'status',
+                                    'percent', 'speed', 'eta', 'error', 'file',
+                                    'created', 'updated')}
+    if (view['status'] in ('downloading', 'processing')
+            and now - (view['updated'] or 0) > JOBS_STALE_S
+            and not _pid_alive(job.get('pid'))):
+        view['status'] = 'error'
+        view['error'] = 'Telechargement interrompu (redemarrage du serveur). Relancez-le.'
+    return view
+
+
+def _run_download_job(job_id, fn, *args):
+    """Encapsule un travail de telechargement : statut erreur attrape ici,
+    succes (statut done) pose par la fonction elle-meme."""
+    try:
+        fn(job_id, *args)
+    except _YT_DL_ERRORS as e:
+        _update_job(job_id, status='error', error=_yt_error_message(e))
+    except _YtError as e:
+        _update_job(job_id, status='error', error=str(e))
+    except requests.RequestException as e:
+        _update_job(job_id, status='error', error=f"Telechargement impossible : {e}")
+    except OSError as e:
+        _update_job(job_id, status='error', error=f"Erreur disque : {e}")
+    except Exception as e:   # jamais de tache silencieusement bloquee
+        _update_job(job_id, status='error', error=f"Erreur inattendue : {e}")
+
+
+def _fmt_speed(bytes_per_s):
+    if not bytes_per_s:
+        return ''
+    if bytes_per_s >= 1024 * 1024:
+        return f"{bytes_per_s / (1024 * 1024):.1f} Mo/s"
+    if bytes_per_s >= 1024:
+        return f"{bytes_per_s / 1024:.0f} Ko/s"
+    return f"{bytes_per_s:.0f} o/s"
+
+
+def _fmt_eta(seconds):
+    if not seconds:
+        return ''
+    seconds = int(seconds)
+    if seconds >= 90:
+        return f"~{seconds // 60} min"
+    return f"~{seconds} s"
+
+
+@app.route('/api/download_status')
+def download_status_all():
+    """Etat de toutes les taches recentes : le client sonde ceci."""
+    with JOBS_LOCK:
+        views = [_job_view(j) for j in _prune_jobs(_load_jobs()).values()]
+    views.sort(key=lambda j: (j['status'] in ('done', 'error'), -(j['created'] or 0)))
+    return jsonify({"success": True, "jobs": views})
+
+
+@app.route('/api/download_status/<job_id>')
+def download_job_status(job_id):
+    with JOBS_LOCK:
+        job = _load_jobs().get(job_id)
+    if not job:
+        return jsonify({"success": False, "error": "Tache inconnue"}), 404
+    return jsonify({"success": True, "job": _job_view(job)})
+
+
+def _delete_replaced_file(replace_of, new_dest):
+    """Jalon 3.5 : quand l'utilisateur a choisi de remplacer un doublon,
+    efface l'ancien fichier — apres le telechargement reussi, pour ne jamais
+    perdre l'existant si le nouveau echoue."""
+    if not replace_of or not re.match(r'^[^/\\]+$', replace_of):
+        return
+    old = os.path.abspath(os.path.join(ONLINE_DOWNLOAD_DIR, replace_of))
+    if os.path.isfile(old) and old != os.path.abspath(new_dest):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+
+def _do_download_audius(job_id, track_id, title, artist, artwork_url, replace_of=''):
+    """Travail de fond (tache 3.3) : telecharge la piste Audius, met a jour
+    percent / speed / eta pendant l'ecriture, pose statut done a la fin."""
+    host = get_audius_host()
+    os.makedirs(ONLINE_DOWNLOAD_DIR, exist_ok=True)
+
+    # Pochette (pour l'integrer dans le fichier)
+    artwork_bytes = None
+    if artwork_url:
+        try:
+            ar = requests.get(artwork_url, timeout=10)
+            if ar.status_code == 200:
+                artwork_bytes = ar.content
+        except requests.RequestException:
+            pass
+
+    # 1) Fichier de telechargement officiel si l'artiste l'autorise
+    download_url, ext = None, '.mp3'
+    try:
+        meta = requests.get(
+            f"{host}/v1/tracks/{track_id}",
+            params={'app_name': AUDIUS_APP_NAME}, timeout=10
+        ).json().get('data') or {}
+        if meta.get('downloadable'):
+            durls = meta.get('download_urls') or {}
+            for key, candidate_ext in (('mp3', '.mp3'), ('aac', '.m4a'), ('wav', '.wav')):
+                if durls.get(key):
+                    download_url, ext = durls[key], candidate_ext
+                    break
+            if not download_url:
+                # Endpoint officiel de telechargement d'Audius
+                download_url, ext = f"{host}/v1/tracks/{track_id}/download", '.mp3'
+    except (requests.RequestException, ValueError):
+        pass
+
+    if download_url:
+        r = requests.get(download_url, stream=True, timeout=30)
+    else:
+        # 2) Sinon : enregistrement du flux public diffuse par Audius
+        r = requests.get(
+            f"{host}/v1/tracks/{track_id}/stream",
+            params={'app_name': AUDIUS_APP_NAME},
+            stream=True, allow_redirects=True, timeout=30
+        )
+        ctype = r.headers.get('Content-Type', '')
+        ext = '.m4a' if ('mp4' in ctype or 'aac' in ctype) else '.mp3'
+    r.raise_for_status()
+
+    # Affine l'extension d'apres le type MIME reel du fichier recu
+    ctype = (r.headers.get('Content-Type') or '').lower()
+    if 'wav' in ctype:
+        ext = '.wav'
+    elif 'flac' in ctype:
+        ext = '.flac'
+    elif 'ogg' in ctype:
+        ext = '.ogg'
+    elif 'mp4' in ctype or 'aac' in ctype or 'm4a' in ctype:
+        ext = '.m4a'
+    else:
+        ext = '.mp3'
+
+    # Nom de fichier lisible : accents conserves, caracteres interdits retires
+    safe_base = re.sub(r'[\\/:*?"<>|]+', ' ', f"{artist} - {title}")
+    safe_base = re.sub(r'\s+', ' ', safe_base).strip(' .')[:150]
+    base = safe_base or f"piste_{track_id[:8]}"
+    dest = _unique_dest(ONLINE_DOWNLOAD_DIR, base, ext)
+
+    total = int(r.headers.get('Content-Length') or 0)
+    got, last_push, started = 0, 0.0, time.time()
+    _update_job(job_id, status='downloading', percent=0)
+    with open(dest, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            f.write(chunk)
+            got += len(chunk)
+            now = time.time()
+            if now - last_push > 0.4:      # progression throttlee : ~2 maj/s max
+                last_push = now
+                spd = got / max(now - started, 0.001)
+                fields = {'status': 'downloading', 'speed': _fmt_speed(spd)}
+                if total:
+                    fields['percent'] = min(int(got * 100 / total), 99)
+                    fields['eta'] = _fmt_eta((total - got) / spd) if spd else ''
+                _update_job(job_id, **fields)
+    r.close()
+    if total:
+        _update_job(job_id, percent=99, speed='', eta='')
+
+    _tag_downloaded_file(dest, title, artist, artwork_bytes)
+    _delete_replaced_file(replace_of, dest)
+    _record_downloaded_file(os.path.basename(dest))
+    _update_job(job_id, status='done', percent=100, file=os.path.basename(dest),
+                speed='', eta='')
+
+
 @app.route('/api/download_online', methods=['POST'])
 def download_online():
+    """Cree une tache d'arriere-plan et rend la main immediatement (jalon 3.3)."""
+    if _internet_known_down():
+        return _offline_503()
     data = request.json or {}
     track_id = (data.get('id') or '').strip()
     title = (data.get('title') or 'sans titre').strip()
     artist = (data.get('artist') or 'artiste inconnu').strip()
     artwork_url = data.get('artwork') or ''
+    replace_of = (data.get('replace_of') or '').strip()
 
     if not re.match(r'^[A-Za-z0-9_-]{1,64}$', track_id):
         return jsonify({"success": False, "error": "ID invalide"}), 400
 
-    os.makedirs(ONLINE_DOWNLOAD_DIR, exist_ok=True)
-
-    try:
-        host = get_audius_host()
-
-        # Pochette (pour l'integrer dans le fichier)
-        artwork_bytes = None
-        if artwork_url:
-            try:
-                ar = requests.get(artwork_url, timeout=10)
-                if ar.status_code == 200:
-                    artwork_bytes = ar.content
-            except requests.RequestException:
-                pass
-
-        # 1) Fichier de telechargement officiel si l'artiste l'autorise
-        download_url, ext = None, '.mp3'
-        try:
-            meta = requests.get(
-                f"{host}/v1/tracks/{track_id}",
-                params={'app_name': AUDIUS_APP_NAME}, timeout=10
-            ).json().get('data') or {}
-            if meta.get('downloadable'):
-                durls = meta.get('download_urls') or {}
-                for key, candidate_ext in (('mp3', '.mp3'), ('aac', '.m4a'), ('wav', '.wav')):
-                    if durls.get(key):
-                        download_url, ext = durls[key], candidate_ext
-                        break
-                if not download_url:
-                    # Endpoint officiel de telechargement d'Audius
-                    download_url, ext = f"{host}/v1/tracks/{track_id}/download", '.mp3'
-        except (requests.RequestException, ValueError):
-            pass
-
-        if download_url:
-            r = requests.get(download_url, stream=True, timeout=30)
-        else:
-            # 2) Sinon : enregistrement du flux public diffuse par Audius
-            r = requests.get(
-                f"{host}/v1/tracks/{track_id}/stream",
-                params={'app_name': AUDIUS_APP_NAME},
-                stream=True, allow_redirects=True, timeout=30
-            )
-            ctype = r.headers.get('Content-Type', '')
-            ext = '.m4a' if ('mp4' in ctype or 'aac' in ctype) else '.mp3'
-        r.raise_for_status()
-
-        # Affine l'extension d'apres le type MIME reel du fichier recu
-        ctype = (r.headers.get('Content-Type') or '').lower()
-        if 'wav' in ctype:
-            ext = '.wav'
-        elif 'flac' in ctype:
-            ext = '.flac'
-        elif 'ogg' in ctype:
-            ext = '.ogg'
-        elif 'mp4' in ctype or 'aac' in ctype or 'm4a' in ctype:
-            ext = '.m4a'
-        else:
-            ext = '.mp3'
-
-        # Nom de fichier lisible : accents conserves, caracteres interdits retires
-        safe_base = re.sub(r'[\\/:*?"<>|]+', ' ', f"{artist} - {title}")
-        safe_base = re.sub(r'\s+', ' ', safe_base).strip(' .')[:150]
-        base = safe_base or f"piste_{track_id[:8]}"
-        dest = _unique_dest(ONLINE_DOWNLOAD_DIR, base, ext)
-        with open(dest, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=64 * 1024):
-                if chunk:
-                    f.write(chunk)
-        r.close()
-
-        _tag_downloaded_file(dest, title, artist, artwork_bytes)
-
-        rel_path = os.path.relpath(dest, MUSIC_DIR).replace('\\', '/')
-        return jsonify({
-            "success": True,
-            "file": os.path.basename(dest),
-            "library_path": rel_path,
-            "dir": ONLINE_DOWNLOAD_DIR
-        })
-    except requests.RequestException as e:
-        return jsonify({"success": False, "error": f"Telechargement impossible : {e}"}), 502
-    except OSError as e:
-        return jsonify({"success": False, "error": f"Erreur disque : {e}"}), 500
+    job, created = _create_job('audius', 'audius:' + track_id, title, artist)
+    if created:
+        DOWNLOAD_POOL.submit(_run_download_job, job['id'],
+                             _do_download_audius, track_id, title, artist,
+                             artwork_url, replace_of)
+    return jsonify({"success": True, "job_id": job['id'], "title": title})
 
 # =============================================================================
 # EXPLORATION YOUTUBE (catalogue complet via yt-dlp)
@@ -1362,6 +1857,8 @@ def search_youtube():
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({"results": []})
+    if _internet_known_down():
+        return _offline_503()
     if not YTDLP_AVAILABLE:
         return jsonify({"results": [], "error": "yt-dlp non installe : pip install yt-dlp"}), 500
     key = query.lower()
@@ -1411,6 +1908,8 @@ def stream_youtube(track_id):
     # Proxy du flux audio YouTube : same-origin => EQ (Web Audio) et seek fonctionnent.
     if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
         return jsonify({"error": "ID invalide"}), 400
+    if _internet_known_down():
+        return _offline_503()
     if not YTDLP_AVAILABLE:
         return jsonify({"error": "yt-dlp non installe"}), 500
 
@@ -1462,22 +1961,29 @@ def stream_youtube(track_id):
     return Response(stream_with_context(relay()), status=upstream.status_code, headers=resp_headers)
 
 
-@app.route('/api/download_youtube', methods=['POST'])
-def download_youtube():
-    # Telecharge la piste audio dans MUSIC_DIR, tags + pochette integres.
+def _do_download_youtube(job_id, track_id, title, artist, artwork_url, replace_of=''):
+    """Travail de fond (tache 3.3) : yt-dlp avec hooks de progression,
+    conversion/tag ffmpeg en phase processing, statut done a la fin."""
     if not YTDLP_AVAILABLE:
-        return jsonify({"success": False, "error": "yt-dlp non installe : pip install yt-dlp"}), 500
-    data = request.json or {}
-    track_id = (data.get('id') or '').strip()
-    title = (data.get('title') or 'sans titre').strip()
-    artist = (data.get('artist') or 'YouTube').strip()
-    artwork_url = data.get('artwork') or f'https://i.ytimg.com/vi/{track_id}/hqdefault.jpg'
-    if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
-        return jsonify({"success": False, "error": "ID invalide"}), 400
-
+        raise _YtError("yt-dlp non installe : pip install yt-dlp", 500)
     ffmpeg = shutil.which('ffmpeg')
     os.makedirs(ONLINE_DOWNLOAD_DIR, exist_ok=True)
     workdir = tempfile.mkdtemp(prefix='resonance_yt_')
+
+    def _hook(d):
+        if d.get('status') == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            got = d.get('downloaded_bytes') or 0
+            fields = {'status': 'downloading',
+                      'speed': _fmt_speed(d.get('speed')),
+                      'eta': _fmt_eta(d.get('eta'))}
+            if total:
+                fields['percent'] = min(int(got * 100 / total), 99)
+            _update_job(job_id, **fields)
+        elif d.get('status') == 'finished':
+            # post-traitement ffmpeg (conversion mp3 + tags) : la barre
+            # reste pres de la fin le temps de l'etaquage
+            _update_job(job_id, status='processing', percent=99, speed='', eta='')
 
     opts = _yt_base_opts()
     opts.update({
@@ -1485,6 +1991,7 @@ def download_youtube():
         'retries': 3,
         'format': ('bestaudio/best' if ffmpeg else
                    'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio[ext=ogg]/bestaudio'),
+        'progress_hooks': [_hook],
     })
     if ffmpeg:
         opts['postprocessors'] = [
@@ -1517,25 +2024,44 @@ def download_youtube():
             except requests.RequestException:
                 pass
         _tag_downloaded_file(dest, title, artist, artwork_bytes)
-
-        rel_path = os.path.relpath(dest, MUSIC_DIR).replace('\\', '/')
-        return jsonify({"success": True, "file": os.path.basename(dest),
-                        "library_path": rel_path, "dir": ONLINE_DOWNLOAD_DIR})
-    except yt_dlp.utils.DownloadError as e:
-        code = 502   # 401 laisserait croire a un probleme de connexion a l'app
-        return jsonify({"success": False, "error": _yt_error_message(e)}), code
-    except _YtError as e:
-        return jsonify({"success": False, "error": str(e)}), e.code
-    except OSError as e:
-        return jsonify({"success": False, "error": f"Erreur disque : {e}"}), 500
+        _delete_replaced_file(replace_of, dest)
+        _record_downloaded_file(os.path.basename(dest))
+        _update_job(job_id, status='done', percent=100,
+                    file=os.path.basename(dest), speed='', eta='')
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+@app.route('/api/download_youtube', methods=['POST'])
+def download_youtube():
+    """Cree une tache d'arriere-plan et rend la main immediatement (jalon 3.3)."""
+    if _internet_known_down():
+        return _offline_503()
+    if not YTDLP_AVAILABLE:
+        return jsonify({"success": False, "error": "yt-dlp non installe : pip install yt-dlp"}), 500
+    data = request.json or {}
+    track_id = (data.get('id') or '').strip()
+    title = (data.get('title') or 'sans titre').strip()
+    artist = (data.get('artist') or 'YouTube').strip()
+    artwork_url = data.get('artwork') or f'https://i.ytimg.com/vi/{track_id}/hqdefault.jpg'
+    replace_of = (data.get('replace_of') or '').strip()
+    if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
+        return jsonify({"success": False, "error": "ID invalide"}), 400
+
+    job, created = _create_job('youtube', 'youtube:' + track_id, title, artist)
+    if created:
+        DOWNLOAD_POOL.submit(_run_download_job, job['id'],
+                             _do_download_youtube, track_id, title, artist,
+                             artwork_url, replace_of)
+    return jsonify({"success": True, "job_id": job['id'], "title": title})
 
 # =============================================================================
 # LANCEMENT
 # =============================================================================
 
 init_db()   # idempotent : necessaire aussi sous gunicorn/docker (import du module)
+_backfill_downloaded_files()   # telechargements anterieurs -> hors ligne auto
+_maybe_start_probe()   # etat reseau connu des le demarrage, sans bloquer un worker
 
 if __name__ == '__main__':
     print(f"RESONANCE AUDIO SERVER ACTIF - Dossier : {MUSIC_DIR}")

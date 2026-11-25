@@ -24,9 +24,12 @@ ce qui s'est passe, pourquoi, et quoi faire.
 - **Paroles** : bouton microphone dans la barre du lecteur. Les paroles sont
   recherchees sur internet (base libre LRCLib, sans compte ni cle) et
   affichees en karaoke synchronise quand elles sont disponibles : la ligne en
-  cours est surlignee, cliquez une ligne pour y sauter. Le bouton CC
-  desactive/reactive le suivi automatique. Chaque recherche est mise en cache
-  dans la base : y revenir est instantane et ne relance pas internet.
+  cours est surlignee et le texte **defile tout seul avec la musique** (la
+  ligne active reste au tiers superieur du panneau) — si vous faites defiler
+  vous-meme, le suivi se suspend quelques secondes puis reprend. Cliquez une
+  ligne pour y sauter. Le bouton CC desactive/reactive le suivi automatique.
+  Chaque recherche est mise en cache dans la base : y revenir est instantane
+  et ne relance pas internet.
 - **Clip** : bouton film dans la barre du lecteur. Le clip officiel est joue
   en video, relaye par votre serveur. S'il n'existe pas de clip, la pochette
   de l'album (ou de la chanson) s'affiche a la place.
@@ -35,6 +38,58 @@ ce qui s'est passe, pourquoi, et quoi faire.
   dossier affiche le chemin reellement surveille par le serveur et le nombre
   de titres. Apres chaque telechargement, si le fichier n'apparait pas dans
   la bibliotheque, l'application vous le dit avec le dossier en cause.
+- **Performance** : les tags de chaque fichier ne sont plus relus a chaque
+  sondage (l'interface interroge le serveur toutes les 5 s) : un cache
+  memoire par fichier ne re-analyse que les fichiers nouveaux ou modifies,
+  et l'etat repond 304 sans transfert quand rien n'a change — meme sur une
+  grosse bibliotheque, le sondage reste leger.
+- **Suppression** : le bouton corbeille de chaque ligne efface le titre —
+  le fichier sur le disque du serveur, ses favoris et playlists, et sa copie
+  eventuelle du stockage hors ligne du navigateur (confirmation demandee).
+- **Stockage hors ligne automatique** : tout titre telecharge par
+  l'application est mis en cache du navigateur des son apparition dans la
+  bibliotheque — jouable simplement et a tout moment, meme quand le serveur
+  est injoignable (les telechargements anterieurs sont retrouves via le
+  journal des taches persistant). Le cache reste plafonne (512 Mo par
+  defaut) et evicte du plus lourd quand il depasse. Le bouton base de
+  donnees de l'en-tete affiche la place reellement occupee.
+- **Robustesse (3.5)** : retélécharger un titre deja present propose de le
+  remplacer ou d'ignorer au lieu de creer un doublon ; la recherche ne
+  filtre qu'apres 200 ms sans frappe (fluidite sur les grandes listes) ;
+  la base SQLite passe en mode WAL (moins de verrous entre les processus
+  du serveur ; desactive automatiquement si le systeme de fichiers le
+  refuse, pour ne jamais bloquer le demarrage) ; nouveaux raccourcis —
+  **L** paroles, **C** clip — et un
+  aide-memoire affichable avec **?** (ou le bouton clavier de l'en-tete).
+- **Serveur sans Internet : la musique locale reste instantanee** — la sonde
+  de connectivite tourne en tache de fond et l'etat dernier connu repond en
+  quelques millisecondes (avant, elle bloquait les 2 workers du serveur sur
+  le DNS pendant des dizaines de secondes : un titre mettait plus d'une
+  minute a demarrer). Les fonctions en ligne (recherche, tendances, clips,
+  paroles hors cache, telechargements) echouent aussitot avec un message
+  clair au lieu de pendre. Surtout, la perte d'Internet du serveur ne coupe
+  JAMAIS la lecture de la bibliotheque locale ni l'enchainement de la file.
+  La variable d'environnement RESONANCE_PROBE_INTERNET permet de sonner une
+  passerelle personnelle (deploiement air-gap).
+
+## Telechargements en arriere-plan et lecture resilient (nouveau)
+
+- **Telechargements sans blocage** : cliquer un telechargement (Audius ou
+  YouTube) rend la main immediatement — le travail se poursuit sur le
+  serveur, meme si vous fermez l'onglet ou changez de vue. Le bouton nuage
+  de l'en-tete ouvre le panneau des telechargements : chaque tache y montre
+  son pourcentage, sa vitesse et le temps restant ; un compteur sur le
+  bouton signale les taches en cours, et un message previent a la fin (la
+  bibliotheque est rescannee toute seule). Recharger la page en plein
+  telechargement n'efface rien : la tache en cours est re-adoptee a
+  l'ouverture. L'etat des taches est garde dans un fichier JSON a cote de
+  la base, partage entre les processus du serveur.
+- **Lecture qui ne casse plus** : si un flux s'interrompt (reseau mobile,
+  adresse de flux expiree), la piste est rechargee automatiquement a la
+  position ou vous en etiez, avec un message clair. Si le flux reste
+  injoignable, la lecture passe au titre suivant de la file — jusqu'a 3
+  fois — puis s'arrete proprement en vous expliquant quoi faire. Hors
+  ligne, la lecture s'arrete sans balayer inutilement toute la file.
 
 ## IMPORTANT — dossier de musique : chemin absolu dans le compose
 

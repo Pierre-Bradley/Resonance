@@ -1,3 +1,16 @@
-resonance_data.json.backup
+# Caches Python / pytest — regeneres automatiquement, jamais versionnes
+__pycache__/
+*.pyc
+
+# Base locale creee par l'application ou les tests
 resonance.db
+resonance_data.json
+resonance_data.json.backup
+
+# Etat des telechargements en arriere-plan (jalon 3.3)
+download_jobs.json
+download_jobs.json.tmp
+
+# Documents divers
 ameliorations_resonance.docx
+upgrade.txt

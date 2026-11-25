@@ -65,10 +65,14 @@
             background-color: var(--bg-color);
             color: var(--text-main);
             height: 100vh;
+            height: 100dvh;   /* mobile : hauteur reelle du viewport (barre d'URL/toolbar dynamique) */
             padding-bottom: 90px;
             display: flex;
             overflow: hidden;
             position: relative;
+            max-width: 100vw;
+            overscroll-behavior: none;   /* pas de rebond elastique qui decale la page */
+            touch-action: pan-y;         /* le doigt ne peut plus faire glisser la page lateralement */
         }
 
         /* ===== CORRECTIFS RESPONSIVE DE BASE ===== */
@@ -536,6 +540,132 @@
             border: none;
             overflow: hidden;
         }
+
+        /* TELECHARGEMENTS EN ARRIERE-PLAN (jalon 3.3) : panneau de notifications */
+        .dl-panel {
+            width: 320px;
+            background: var(--panel-bg);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            height: 100%;
+            z-index: 5;
+            transform: translateX(0);
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease,
+                        top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            /* Notification visible : le panneau descend sous le toast
+               (variable posee par JS a la hauteur reelle du toast) */
+            --dl-toast-shift: 150px;
+        }
+        .dl-panel.shift-down {
+            transform: translateX(0) translateY(var(--dl-toast-shift));
+        }
+        .dl-panel.hidden {
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
+            width: 0;
+            padding: 0;
+            border: none;
+            overflow: hidden;
+        }
+        .dl-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .dl-header h3 { font-size: 1.1rem; color: var(--accent); margin: 0; }
+        .dl-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .dl-item {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        .dl-item.done { border-color: var(--accent); }
+        .dl-item.error { border-color: var(--danger); }
+        .dl-item-title {
+            font-size: 0.9rem;
+            font-weight: bold;
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .dl-item-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; }
+        .dl-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.1);
+            margin-top: 7px;
+            overflow: hidden;
+        }
+        [data-theme="light"] .dl-bar { background: rgba(0,0,0,0.08); }
+        .dl-bar-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            background: var(--accent);
+            transition: width 0.4s ease;
+        }
+        .dl-item.error .dl-bar-fill { background: var(--danger); }
+        .dl-empty { color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 20px 0; }
+        .dl-toggle {
+            position: relative;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            width: 38px; height: 38px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center; justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+        }
+        .dl-toggle:hover, .dl-toggle.active { color: var(--accent); border-color: var(--accent); }
+        .dl-badge {
+            position: absolute;
+            top: -5px; right: -5px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 0.65rem;
+            font-weight: bold;
+            min-width: 16px; height: 16px;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            padding: 0 4px;
+        }
+        .dl-badge.hidden { display: none; }
+
+        /* AIDE-MEMOIRE DES RACCOURCIS CLAVIER (jalon 3.5) */
+        .shortcuts-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 16px; }
+        .shortcuts-list div {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 7px 4px;
+            font-size: 0.9rem;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--border);
+        }
+        .shortcuts-list div:last-child { border-bottom: none; }
+        .shortcuts-list kbd {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 3px 9px;
+            font-family: inherit;
+            font-size: 0.8rem;
+            color: var(--accent);
+            white-space: nowrap;
+        }
         .queue-header {
             display: flex;
             justify-content: space-between;
@@ -600,8 +730,9 @@
 
         /* PLAYER */
         .player-bar {
-            position: absolute;
+            position: fixed;   /* ancre au viewport : visible quel que soit le comportement de 100vh */
             bottom: 0; left: 0; right: 0;
+            overflow: hidden;  /* le contenu ne doit jamais elargir la page sur mobile */
             background: var(--panel-bg);
             border-top: 1px solid var(--border);
             padding: 12px 40px;
@@ -923,7 +1054,7 @@
         /* ===== RESPONSIVE ===== */
         @media (max-width: 1200px) {
             .sidebar { width: 240px; }
-            .lyrics-panel, .queue-panel { width: 280px; }
+            .lyrics-panel, .queue-panel, .dl-panel { width: 280px; }
             .header { padding: 20px 25px; }
             .playlist-view { padding: 15px 25px; }
         }
@@ -935,11 +1066,17 @@
             .search-bar:focus { width: 240px; }
             .header h1 { font-size: 1.5rem; }
             /* Panneaux paroles/file : superposition au-dessus du contenu */
-            .lyrics-panel, .queue-panel {
+            .lyrics-panel, .queue-panel, .dl-panel {
                 position: fixed;
                 top: 0; right: 0; bottom: 90px;
                 z-index: 60;
                 box-shadow: -8px 0 30px var(--shadow-color);
+            }
+            /* Sur mobile le panneau est fixe : il descend via top (sa base
+               reste au-dessus de la barre de lecture) */
+            .dl-panel.shift-down {
+                transform: translateX(0);
+                top: var(--dl-toast-shift);
             }
         }
 
@@ -984,10 +1121,23 @@
             .song-cover-thumb { width: 34px; height: 34px; margin-right: 8px; }
             .song-meta { display: none; }
             .search-type-select { display: none; }
-            .player-bar { height: 74px; padding: 8px 12px; }
-            body { padding-bottom: 74px; }
-            .lyrics-panel, .queue-panel { bottom: 74px; width: min(100vw, 350px); }
-            .volume-slider { width: 54px; }
+
+            /* Mini-lecteur compact : prev / play / next + progression tiennent
+               dans 375px. Volume (touches materielles du telephone), shuffle
+               et repeat sont masques pour ne pas faire deborder la barre. */
+            .player-bar { height: 64px; padding: 8px 10px; }
+            body { padding-bottom: 64px; }
+            .player-cover { width: 44px; height: 44px; }
+            .player-info { gap: 8px; }
+            .control-buttons { gap: 4px; }
+            .ctrl-btn { padding: 4px; font-size: 1.05rem; }
+            .play-btn { font-size: 1.8rem; }
+            #btn-shuffle, #btn-repeat { display: none; }
+            .player-btn { padding: 6px; }
+            .player-btn .btn-label { display: none; }
+            #volume-icon, #volume-slider { display: none; }
+            .player-extra { gap: 4px; }
+            .lyrics-panel, .queue-panel, .dl-panel { bottom: 64px; width: min(100vw, 350px); }
             .group-header { padding: 12px 12px 6px; }
         }
 
@@ -1021,7 +1171,7 @@
         }
 
         /* Materiau verre : panneaux principaux */
-        .sidebar, .player-bar, .lyrics-panel, .queue-panel, .modal,
+        .sidebar, .player-bar, .lyrics-panel, .queue-panel, .dl-panel, .modal,
         .import-toast, .kb-hint {
             background: var(--glass-bg);
             -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%);
@@ -1034,7 +1184,7 @@
         }
         /* Arete speculaire : ligne de lumiere en haut de chaque panneau */
         .sidebar::before, .player-bar::before, .lyrics-panel::before,
-        .queue-panel::before, .modal::before, .import-toast::before, .kb-hint::before {
+        .queue-panel::before, .dl-panel::before, .modal::before, .import-toast::before, .kb-hint::before {
             content: '';
             position: absolute;
             top: 0; left: 14%; right: 14%;
@@ -1103,7 +1253,7 @@
 
         /* Fallback navigateurs sans backdrop-filter */
         @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-            .sidebar, .player-bar, .lyrics-panel, .queue-panel, .modal, .import-toast, .kb-hint {
+            .sidebar, .player-bar, .lyrics-panel, .queue-panel, .dl-panel, .modal, .import-toast, .kb-hint {
                 background: var(--glass-fallback);
             }
         }
@@ -1281,8 +1431,18 @@
                     <button class="theme-toggle" id="refresh-library-btn" onclick="refreshLibrary()" title="Actualiser la bibliotheque (rescanner le dossier de musique)">
                         <i class="fas fa-rotate-right" id="refresh-library-icon"></i>
                     </button>
+                    <button class="dl-toggle" id="dl-toggle" onclick="toggleDlPanel()" title="Telechargements en cours">
+                        <i class="fas fa-cloud-arrow-down"></i>
+                        <span class="dl-badge hidden" id="dl-badge">0</span>
+                    </button>
+                    <button class="theme-toggle" onclick="openModal('shortcuts-modal')" title="Raccourcis clavier (aide-memoire)">
+                        <i class="fas fa-keyboard"></i>
+                    </button>
                     <button class="theme-toggle" id="library-dir-btn" onclick="showLibraryDir()" title="Dossier de musique surveille par le serveur">
                         <i class="fas fa-folder-open"></i>
+                    </button>
+                    <button class="theme-toggle" id="storage-btn" onclick="showStorageInfo()" title="Stockage hors ligne occupe par l'application">
+                        <i class="fas fa-database"></i>
                     </button>
                     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Basculer le theme">
                         <i class="fas fa-sun" id="theme-icon"></i>
@@ -1312,6 +1472,16 @@
             </div>
             <div class="queue-list" id="queue-list"></div>
         </aside>
+
+        <aside class="dl-panel hidden" id="dl-panel">
+            <div class="dl-header">
+                <h3><i class="fas fa-cloud-arrow-down"></i> Telechargements</h3>
+                <button class="action-btn" onclick="toggleDlPanel()" title="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="dl-list" id="dl-list">
+                <div class="dl-empty">Aucun telechargement recent.</div>
+            </div>
+        </aside>
     </div>
 
     <footer class="player-bar">
@@ -1337,11 +1507,11 @@
             </div>
         </div>
         <div class="player-extra">
-            <button class="player-btn" id="queue-btn" onclick="toggleQueuePanel()">
-                <i class="fas fa-list-ol"></i> File
+            <button class="player-btn" id="queue-btn" onclick="toggleQueuePanel()" title="File d'attente">
+                <i class="fas fa-list-ol"></i> <span class="btn-label">File</span>
             </button>
-            <button class="player-btn" id="eq-btn" onclick="openModal('equalizer-modal')">
-                <i class="fas fa-sliders-h"></i> EQ
+            <button class="player-btn" id="eq-btn" onclick="openModal('equalizer-modal')" title="Equaliseur">
+                <i class="fas fa-sliders-h"></i> <span class="btn-label">EQ</span>
             </button>
             <button class="player-btn" id="lyrics-btn" onclick="toggleLyricsPanel()" title="Paroles">
                 <i class="fas fa-microphone-alt"></i>
@@ -1355,6 +1525,23 @@
     </footer>
 
     <!-- MODALS -->
+    <div class="modal-overlay" id="shortcuts-modal" onclick="if (event.target === this) closeModal('shortcuts-modal')">
+        <div class="modal">
+            <h3>Raccourcis clavier</h3>
+            <div class="shortcuts-list">
+                <div><span>Lecture / Pause</span><kbd>Espace</kbd></div>
+                <div><span>Piste suivante / precedente</span><kbd>&rarr; / &larr;</kbd></div>
+                <div><span>Couper / reactiver le son</span><kbd>M</kbd></div>
+                <div><span>Favori</span><kbd>F</kbd></div>
+                <div><span>Paroles</span><kbd>L</kbd></div>
+                <div><span>Clip video</span><kbd>C</kbd></div>
+                <div><span>Cet aide-memoire</span><kbd>?</kbd></div>
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-cancel" onclick="closeModal('shortcuts-modal')">Fermer</button>
+            </div>
+        </div>
+    </div>
     <div class="modal-overlay" id="create-playlist-modal">
         <div class="modal">
             <h3>Nouvelle Playlist</h3>
@@ -1495,10 +1682,18 @@
         // =============================================================
         // FETCH DATA
         // =============================================================
+        let stateETag = null;   // empreinte du dernier /api/state recu (ETag)
         async function fetchData(forceRender = false) {
             try {
-                const res = await fetch('/api/state');
+                // ETag : le sondage de 5 s renvoie l'empreinte connue ; si
+                // rien n'a change cote serveur, il repond 304 et aucun JSON
+                // n'est transfere.
+                const headers = {};
+                if (stateETag) headers['If-None-Match'] = stateETag;
+                const res = await fetch('/api/state', { headers });
+                if (res.status === 304) { autoPinDownloaded(); return; }
                 if (!res.ok) throw new Error("Erreur reseau");
+                stateETag = res.headers.get('ETag');
                 const newState = await res.json();
                 if (forceRender || JSON.stringify(state) !== JSON.stringify(newState)) {
                     state = newState;
@@ -1506,13 +1701,22 @@
                     renderTracks();
                     renderQueue();
                 }
+                autoPinDownloaded();   // nouveaux telechargements -> cache hors ligne
             } catch (err) { console.error("Impossible de recuperer l'etat du serveur :", err); }
         }
 
         // =============================================================
         // SEARCH & SORT
         // =============================================================
+        // Anti-rebond (jalon 3.5) : la recherche ne filtre qu'apres 200 ms sans
+        // frappe — les grandes listes restent fluides et la recherche en ligne
+        // ne part pas a chaque touche.
+        let searchDebounceTimer = null;
         function handleSearch() {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(applySearchNow, 200);
+        }
+        function applySearchNow() {
             searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
             searchType = document.getElementById('search-type').value;
             if (currentView === 'online') { doOnlineSearch(); return; }
@@ -1678,6 +1882,7 @@
                     <span class="song-meta">— ${escapeHtml(song.artist)} &middot; ${escapeHtml(song.album)}</span>
                 </div>
                 <div class="song-actions">
+                    <button class="action-btn text-danger" title="Supprimer (efface le fichier du disque et du stockage hors ligne)" onclick="event.stopPropagation(); deleteSong('${escapeJs(song.path)}', '${escapeJs(song.title)}')"><i class="fas fa-trash"></i></button>
                     <button class="action-btn" title="Ecouter ensuite" onclick="event.stopPropagation(); addToQueueNext('${escapeJs(song.path)}')"><i class="fas fa-step-forward"></i></button>
                     <button class="action-btn" title="Editer" onclick="event.stopPropagation(); openMetadataModal('${escapeJs(song.path)}')"><i class="fas fa-pen"></i></button>
                     ${extraActionBtn}
@@ -1832,36 +2037,75 @@
             updateWaveAnimation();
             if (!isRepeat) playNext();
         });
+        // Lecture resiliente (jalon 3.4) : une erreur de flux ne casse plus
+        // l'ecoute de fond. 1re tentative : recharge la piste a la position
+        // interrompue ; en ligne, l'URL re-demandee fait re-resoudre par le
+        // serveur une adresse fraiche (cache d'adresses deja renouvele), et
+        // le parametre ?retry= contourne une reponse media perimee du SW.
+        // Tentatives suivantes : titre suivant de la file, avec message clair.
+        var audioRetryCount = 0;      // remis a zero a chaque lecture reussie
         var audioResetPending = false;
+        const AUDIO_MAX_SKIPS = 3;
+        audioPlayer.addEventListener('playing', () => { audioRetryCount = 0; });
         audioPlayer.addEventListener('error', () => {
             updateWaveAnimation();
-            const isOnline = currentPlayingPath && currentPlayingPath.indexOf('online:') === 0;
-            if (!isOnline) {
-                console.warn("Piste locale illisible, passage a la suivante.");
-                if (!isRepeat) playNext();
+            // Erreur re-emise par un reset volontaire : on l'ignore
+            if (audioResetPending) { audioResetPending = false; return; }
+            if (!(currentPlayingPath || currentOnlineId) || !audioPlayer.currentSrc) return;
+            const code = audioPlayer.error ? audioPlayer.error.code : 0;
+            const pos = audioPlayer.currentTime || 0;
+
+            // Tentative 1 : reprise a la position interrompue (inutile si le
+            // navigateur ne sait simplement pas decoder le fichier, code 4)
+            if (code !== 4 && audioRetryCount === 0) {
+                audioRetryCount = 1;
+                notifyOnline(pos > 1 ? 'Flux interrompu — reprise de la lecture...'
+                                     : 'Flux indisponible — nouvelle tentative...', true);
+                const base = audioPlayer.currentSrc.split('?')[0];
+                // Serveur joignable : contourner une eventuelle reponse perimee
+                // du SW avec un cache-buster. Serveur injoignable : inutile.
+                const bust = netStatus.server === false ? '' : '?retry=' + Date.now();
+                audioPlayer.src = base + bust;
+                audioPlayer.load();
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    try { audioPlayer.currentTime = pos; } catch (e) { /* flux non cherchable */ }
+                }, { once: true });
+                audioPlayer.play().catch(() => {});
                 return;
             }
-            // Flux en ligne en echec : reinitialisation du lecteur SANS cascade
-            // (un src casse re-emet des erreurs ; la pre-verification de
-            // playOnlineTrack affiche deja le message exact du serveur).
-            if (audioResetPending) { audioResetPending = false; return; }
-            audioResetPending = true;
-            const failedSrc = audioPlayer.currentSrc;
-            audioPlayer.removeAttribute('src');
-            audioPlayer.load();
-            currentPlayingPath = null;
-            currentOnlineId = null;
-            document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
-            // Recupere le message exact du serveur (2 octets seulement : Range 0-1)
-            if (failedSrc) {
-                fetch(failedSrc, { headers: { 'Range': 'bytes=0-1' } })
-                    .then(r => r.ok ? Promise.reject(new Error('flux ok')) : r.json())
-                    .then(d => notifyOnline(d.error || 'Cette musique ne peut pas etre lue pour le moment. Reessayez.', true))
-                    .catch(e => {
-                        if (e && e.message === 'flux ok') return;
-                        if (netStatus.online === false) notifyOnline('Vous etes hors ligne. La lecture reprendra au retour de la connexion.', true);
-                    });
+
+            audioRetryCount++;
+
+            // Trop d'echecs d'affilee : on s'arrete proprement, sans boucle.
+            if (audioRetryCount > 1 + AUDIO_MAX_SKIPS) {
+                audioRetryCount = 0;
+                notifyOnline('Plusieurs titres sont inatteignables. Lecture interrompue — reessayez plus tard.', true);
+                audioResetPending = true;
+                audioPlayer.removeAttribute('src');
+                audioPlayer.load();
+                currentPlayingPath = null;
+                currentOnlineId = null;
+                document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
+                updatePlayBtnUI();
+                return;
             }
+
+            // Serveur INJOIGNABLE par le navigateur : inutile de balayer la
+            // file, chaque titre echouerait. En revanche un serveur joignable
+            // mais PRIVE D'INTERNET continue de servir les titres locaux depuis
+            // son disque : on ne coupe jamais la lecture dans ce cas.
+            if (netStatus.server === false) {
+                notifyOnline('Serveur injoignable. La lecture reprendra au retour de la connexion.', true);
+                audioResetPending = true;
+                audioPlayer.removeAttribute('src');
+                audioPlayer.load();
+                updatePlayBtnUI();
+                return;
+            }
+
+            notifyOnline(code === 4 ? 'Format audio non supporte — passage au titre suivant.'
+                                    : 'Flux indisponible — passage au titre suivant.', true);
+            setTimeout(() => { try { playNext(); } catch (e) { /* rien de jouable */ } }, 500);
         });
 
         function seek(event) {
@@ -2050,6 +2294,7 @@
             const toast = document.getElementById('import-toast');
             document.getElementById('import-toast-msg').textContent = count + " fichier(s) ajoute(s) a votre bibliotheque";
             toast.classList.add('show');
+            armDlToastShift(3500);
             setTimeout(() => toast.classList.remove('show'), 3500);
         }
 
@@ -2101,6 +2346,21 @@
         }
         document.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+            // Aide-memoire (jalon 3.5) : '?' ouvre la liste des raccourcis
+            if (e.key === '?') {
+                e.preventDefault();
+                openModal('shortcuts-modal');
+                return;
+            }
+            // Echap : ferme la modale ouverte (clip inclu, qui stoppe la video)
+            if (e.code === 'Escape') {
+                const clip = document.getElementById('clip-modal');
+                if (clip && clip.style.display === 'flex') { closeClipModal(); return; }
+                const opened = Array.from(document.querySelectorAll('.modal-overlay'))
+                    .find(m => m.style.display === 'flex');
+                if (opened) opened.style.display = 'none';
+                return;
+            }
             switch(e.code) {
                 case 'Space':
                     e.preventDefault();
@@ -2125,8 +2385,22 @@
                         showKbHint('<kbd>F</kbd> Favori toggle');
                     }
                     break;
+                case 'KeyL':
+                    toggleLyricsPanel();
+                    showKbHint('<kbd>L</kbd> Paroles');
+                    break;
+                case 'KeyC':
+                    toggleClipModal();
+                    showKbHint('<kbd>C</kbd> Clip');
+                    break;
             }
         });
+
+        function toggleClipModal() {
+            const modal = document.getElementById('clip-modal');
+            if (modal && modal.style.display === 'flex') { closeClipModal(); return; }
+            openClipModal();
+        }
 
         // =============================================================
         // LYRICS
@@ -2202,6 +2476,7 @@
         function renderLyrics(synced, plain) {
             const el = document.getElementById('lyrics-text');
             lyricsLines = [];
+            lyricsActiveIdx = -1;
             if (synced && /\[\d{1,2}:\d{2}/.test(synced)) {
                 lyricsLines = parseLrc(synced);
                 el.innerHTML = '';
@@ -2220,6 +2495,19 @@
             }
         }
 
+        // Defilement automatique (jalon paroles) : le suivi se suspend quelques
+        // secondes quand l'utilisateur fait defiler lui-meme (molette/tactile),
+        // pour ne pas se battre avec son doigt.
+        let lyricsActiveIdx = -1;
+        let lyricsManualUntil = 0;
+        function pauseLyricsFollow() { lyricsManualUntil = Date.now() + 4000; }
+        (function watchLyricsManualScroll() {
+            const el = document.getElementById('lyrics-text');
+            if (!el) return;
+            ['wheel', 'touchstart', 'touchmove'].forEach(ev =>
+                el.addEventListener(ev, pauseLyricsFollow, { passive: true }));
+        })();
+
         function updateLyricsHighlight(autoScroll) {
             if (!lyricsLines.length) return;
             const t = audioPlayer.currentTime;
@@ -2228,16 +2516,21 @@
                 if (lyricsLines[i].t !== null && lyricsLines[i].t <= t + 0.2) idx = i;
                 else break;
             }
+            if (idx === lyricsActiveIdx) return;   // ligne inchangee : rien a refaire
+            lyricsActiveIdx = idx;
             const el = document.getElementById('lyrics-text');
             const children = el.children;
             for (let i = 0; i < children.length; i++) children[i].classList.remove('active');
             if (idx >= 0 && children[idx]) {
                 children[idx].classList.add('active');
-                if (autoScroll && lyricsSyncOn) {
-                    const panel = document.getElementById('lyrics-panel');
-                    // scroll doux : la ligne active reste au tiers superieur
-                    const target = children[idx].offsetTop - panel.clientHeight / 3;
-                    panel.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+                if (autoScroll && lyricsSyncOn && Date.now() >= lyricsManualUntil) {
+                    // Scroll du VRAI conteneur defilant (.lyrics-content) : le
+                    // code initial visait le panneau (overflow: hidden) et ne
+                    // bougeait donc jamais — l'utilisateur devait suivre a la main.
+                    const delta = children[idx].getBoundingClientRect().top
+                                - el.getBoundingClientRect().top;
+                    const target = el.scrollTop + delta - el.clientHeight / 3;
+                    el.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
                 }
             }
         }
@@ -2353,6 +2646,110 @@
         // =============================================================
         // FAVORITES & PLAYLISTS
         // =============================================================
+        // Pinnage hors ligne : liste en localStorage + message PIN_TRACK au
+        // service worker (le SW met le flux et la pochette en cache media,
+        // plafonne et evictable). Un favori n'est PAS epingle automatiquement.
+        let pinnedTracks = [];
+        try { pinnedTracks = JSON.parse(localStorage.getItem('resonance_pinned') || '[]'); } catch (e) { pinnedTracks = []; }
+        let pendingPins = new Set(pinnedTracks);
+
+        function streamUrlFor(path) { return '/stream/' + encodeURIComponent(path); }
+        function coverUrlFor(path) { return '/api/cover/' + encodeURIComponent(path); }
+
+        function sendToSW(msg) {
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage(msg);
+            }
+        }
+
+        function persistPinned() {
+            try { localStorage.setItem('resonance_pinned', JSON.stringify(pinnedTracks)); } catch (e) {}
+        }
+
+        // Re-soumet au SW les epingles au demarrage (le SW peut etre redemarre
+        // ou avoir ete nettoye par le navigateur) — il retelecharge ce qui manque.
+        function rearmPins() {
+            if (!('serviceWorker' in navigator)) return;
+            navigator.serviceWorker.ready.then(() => {
+                for (const path of pendingPins) {
+                    const song = state.songs.find(s => s.path === path);
+                    sendToSW({
+                        type: 'PIN_TRACK',
+                        path: path,
+                        streamUrl: streamUrlFor(path),
+                        coverUrl: song && song.has_cover ? coverUrlFor(path) : null
+                    });
+                }
+            });
+        }
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                const msg = event.data || {};
+                if (msg.type === 'MEDIA_CACHED' && msg.path) {
+                    pendingPins.delete(msg.path);
+                }
+            });
+        }
+
+        function isPinned(path) { return pinnedTracks.includes(path); }
+
+        // Hors ligne automatique (remplace la punaise supprimee) : tout titre
+        // telecharge par l'application est mis en cache du navigateur des qu'il
+        // apparait dans la bibliotheque — jouable simplement et a tout moment,
+        // meme quand le serveur est injoignable. Le cache reste plafonne et
+        // evictable (512 Mo par defaut).
+        function autoPinDownloaded() {
+            if (!('serviceWorker' in navigator)) return;
+            // Premier chargement : le SW n'est pas encore actif — on attend
+            // qu'il le soit (idempotent : les suivants ne repinent rien).
+            navigator.serviceWorker.ready.then(() => {
+                if (!navigator.serviceWorker.controller) return;
+                let added = false;
+                for (const song of state.songs) {
+                    if (!song.downloaded || isPinned(song.path)) continue;
+                    pinnedTracks.push(song.path);
+                    pendingPins.add(song.path);
+                    added = true;
+                    sendToSW({
+                        type: 'PIN_TRACK',
+                        path: song.path,
+                        streamUrl: streamUrlFor(song.path),
+                        coverUrl: song.has_cover ? coverUrlFor(song.path) : null
+                    });
+                }
+                if (added) persistPinned();
+            });
+        }
+
+        async function togglePin(path) {
+            const song = state.songs.find(s => s.path === path);
+            const idx = pinnedTracks.indexOf(path);
+            if (idx === -1) {
+                pinnedTracks.push(path);
+                pendingPins.add(path);
+                persistPinned();
+                sendToSW({
+                    type: 'PIN_TRACK',
+                    path: path,
+                    streamUrl: streamUrlFor(path),
+                    coverUrl: song && song.has_cover ? coverUrlFor(path) : null
+                });
+                showKbHint('Mise hors ligne en cours...');
+            } else {
+                pinnedTracks.splice(idx, 1);
+                pendingPins.delete(path);
+                persistPinned();
+                sendToSW({
+                    type: 'UNPIN_TRACK',
+                    path: path,
+                    streamUrl: streamUrlFor(path),
+                    coverUrl: song && song.has_cover ? coverUrlFor(path) : null
+                });
+                showKbHint('Titre retire du stockage hors ligne');
+            }
+            renderTracks();
+        }
+
         async function toggleFavorite(path) {
             await fetch('/api/toggle_favorite', {
                 method: 'POST',
@@ -2360,6 +2757,48 @@
                 body: JSON.stringify({ path: path })
             });
             fetchData(true);
+        }
+
+        // Suppression d'un titre (jalon 3.5, remplace l'epingle hors ligne :
+        // les titres telecharges restent de toute facon accessibles hors ligne).
+        // Efface le fichier sur le serveur, ses favoris/playlists, le cache
+        // media du navigateur et la liste epingree locale.
+        async function deleteSong(path, title) {
+            if (!confirm('Supprimer « ' + title + ' » de la bibliotheque ?\nLe fichier sera definitivement efface du disque du serveur.')) return;
+            try {
+                const res = await fetch('/api/delete_song', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    notifyOnline(data.error || 'Suppression impossible.', true);
+                    return;
+                }
+                const idx = pinnedTracks.indexOf(path);
+                if (idx !== -1) {
+                    pinnedTracks.splice(idx, 1);
+                    pendingPins.delete(path);
+                    persistPinned();
+                }
+                sendToSW({ type: 'UNPIN_TRACK', path: path, streamUrl: streamUrlFor(path), coverUrl: coverUrlFor(path) });
+                if (currentPlayingPath === path) {
+                    // Titre en cours supprime : on coupe proprement, sans cascade d'erreurs
+                    audioResetPending = true;
+                    audioPlayer.removeAttribute('src');
+                    audioPlayer.load();
+                    currentPlayingPath = null;
+                    currentOnlineId = null;
+                    document.querySelectorAll('.song-row.playing').forEach(el => el.classList.remove('playing'));
+                    updatePlayBtnUI();
+                    updateWaveAnimation();
+                }
+                await fetchData(true);
+                notifyOnline('Supprime : ' + title);
+            } catch (e) {
+                notifyOnline('Suppression impossible : serveur injoignable.', true);
+            }
         }
         async function deletePlaylist(name) {
             if (confirm('Supprimer la playlist "' + name + '" ?')) {
@@ -2436,7 +2875,7 @@
         // LAUNCH
         // =============================================================
         initTheme();
-        fetchData(true);
+        fetchData(true).then(rearmPins);
         setInterval(() => fetchData(false), 5000);
 
         // =============================================================
@@ -2466,6 +2905,7 @@
             }
             msgEl.textContent = msg;
             toast.classList.add('show');
+            armDlToastShift(4500);   // le panneau des telechargements degage le toast
             setTimeout(() => toast.classList.remove('show'), 4500);
         }
 
@@ -2646,7 +3086,7 @@
                     errMsg = d.error || 'Cette musique ne peut pas etre lue pour le moment. Reessayez dans quelques instants.';
                 }
             } catch (e) {
-                if (netStatus.online === false) errMsg = 'Vous etes hors ligne. La lecture reprendra au retour de la connexion.';
+                if (netStatus.server === false) errMsg = 'Serveur injoignable. La lecture reprendra au retour de la connexion.';
             }
             if (errMsg) {
                 notifyOnline(errMsg, true);
@@ -2690,6 +3130,178 @@
             updatePlayBtnUI();
         }
 
+        // =============================================================
+        // TELECHARGEMENTS EN ARRIERE-PLAN (jalon 3.3) : panneau, sondage,
+        // re-attachement (reload de page ou autre onglet) et toasts de fin.
+        // =============================================================
+        let dlJobs = {};               // id -> derniere tache connue du serveur
+        const dlActiveIds = new Set(); // taches en cours suivies par cet onglet
+        let dlPollTimer = null;
+
+        function toggleDlPanel(forceOpen = false) {
+            const panel = document.getElementById('dl-panel');
+            const btn = document.getElementById('dl-toggle');
+            if (!panel) return;
+            const show = forceOpen || panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !show);
+            if (btn) btn.classList.toggle('active', show);
+        }
+
+        function updateDlBadge() {
+            const badge = document.getElementById('dl-badge');
+            if (!badge) return;
+            badge.textContent = dlActiveIds.size;
+            badge.classList.toggle('hidden', dlActiveIds.size === 0);
+        }
+
+        // Notification en haut a droite : tant qu'elle est visible, le panneau
+        // des telechargements descend sous elle, puis remonte a sa disparition.
+        let dlToastTimer = null;
+        function armDlToastShift(durationMs) {
+            const panel = document.getElementById('dl-panel');
+            const toast = document.getElementById('import-toast');
+            if (!panel || !toast) return;
+            const h = toast.offsetHeight || 110;
+            panel.style.setProperty('--dl-toast-shift', Math.min(h + 37, 240) + 'px');
+            panel.classList.add('shift-down');
+            if (dlToastTimer) clearTimeout(dlToastTimer);
+            dlToastTimer = setTimeout(() => {
+                panel.classList.remove('shift-down');
+                dlToastTimer = null;
+            }, durationMs);
+        }
+
+        function trackDownload(jobId, title, artist) {
+            dlJobs[jobId] = { id: jobId, title: title, artist: artist, status: 'queued', percent: 0 };
+            dlActiveIds.add(jobId);
+            startDlPolling();
+            renderDlPanel();
+            updateDlBadge();
+        }
+
+        function startDlPolling() {
+            if (dlPollTimer) return;
+            pollDownloads();
+            dlPollTimer = setInterval(pollDownloads, 1500);
+        }
+
+        function stopDlPollingIfIdle() {
+            if (dlActiveIds.size === 0 && dlPollTimer) {
+                clearInterval(dlPollTimer);
+                dlPollTimer = null;
+            }
+        }
+
+        async function pollDownloads() {
+            try {
+                const res = await fetch('/api/download_status');
+                const data = await res.json();
+                if (!data.success) return;
+                let changed = false;
+                for (const job of (data.jobs || [])) {
+                    const prev = dlJobs[job.id];
+                    // Re-attachement : une tache en cours inconnue de cet onglet
+                    // (reload de la page, telechargement lance ailleurs) est adoptee.
+                    if (!prev && ['queued', 'downloading', 'processing'].includes(job.status)) {
+                        dlActiveIds.add(job.id);
+                        changed = true;
+                        startDlPolling();   // le sondage doit suivre cette tache
+                    }
+                    dlJobs[job.id] = job;
+                    if (dlActiveIds.has(job.id) && (job.status === 'done' || job.status === 'error')) {
+                        dlActiveIds.delete(job.id);
+                        changed = true;
+                        onDownloadFinished(job);
+                    } else if (!prev || prev.percent !== job.percent || prev.status !== job.status) {
+                        changed = true;
+                    }
+                }
+                if (changed) { renderDlPanel(); updateDlBadge(); }
+                stopDlPollingIfIdle();
+            } catch (e) { /* serveur momentanement injoignable : nouvelle tentative au prochain cycle */ }
+        }
+
+        function onDownloadFinished(job) {
+            const btn = document.querySelector('.dl-btn[data-job-id="' + job.id + '"]');
+            if (job.status === 'done') {
+                if (btn) btn.innerHTML = '<i class="fas fa-check" style="color:var(--accent)"></i>';
+                notifyOnline('Telecharge : ' + (job.file || job.title) + ' — ajout a votre bibliotheque.');
+                // rescan meme si l'utilisateur a change de vue depuis le lancement
+                fetchData(true).then(() => {
+                    if (job.file && !state.songs.some(s => s.name === job.file)) {
+                        // Fichier telecharge mais dossier surveille ne le voit pas :
+                        // volume /music mal branche (voir docker-compose.yml)
+                        notifyOnline('Telecharge : ' + job.file +
+                            ' — mais le dossier surveille ne le voit pas. Verifiez le volume /music du docker-compose.yml.', true);
+                    }
+                });
+            } else {
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
+                    btn.disabled = false;
+                }
+                notifyOnline(job.error || 'Le telechargement a echoue.', true);
+            }
+        }
+
+        function renderDlPanel() {
+            const list = document.getElementById('dl-list');
+            if (!list) return;
+            const jobs = Object.values(dlJobs).sort((a, b) => {
+                const af = (a.status === 'done' || a.status === 'error') ? 1 : 0;
+                const bf = (b.status === 'done' || b.status === 'error') ? 1 : 0;
+                return (af - bf) || ((b.created || 0) - (a.created || 0));
+            });
+            if (!jobs.length) {
+                list.innerHTML = '<div class="dl-empty">Aucun telechargement recent.</div>';
+                return;
+            }
+            list.innerHTML = jobs.map(job => {
+                const active = job.status === 'queued' || job.status === 'downloading' || job.status === 'processing';
+                let meta, width = 0;
+                if (job.status === 'queued') {
+                    meta = 'En file d\'attente...';
+                    width = 4;
+                } else if (job.status === 'downloading') {
+                    meta = (job.percent ? job.percent + '% — ' : '') +
+                        [job.speed, job.eta].filter(Boolean).join(' — ');
+                    width = job.percent || 4;
+                } else if (job.status === 'processing') {
+                    meta = 'Traitement audio (conversion, tags)...';
+                    width = 99;
+                } else if (job.status === 'done') {
+                    meta = 'Termine — ' + (job.file || job.title);
+                    width = 100;
+                } else {
+                    meta = job.error || 'Echec du telechargement.';
+                }
+                const cls = job.status === 'done' ? ' done' : (job.status === 'error' ? ' error' : '');
+                const bar = '<div class="dl-bar"><div class="dl-bar-fill" style="width:' +
+                    (job.status === 'error' ? 100 : width) + '%"></div></div>';
+                return '<div class="dl-item' + cls + '">' +
+                    '<div class="dl-item-title" title="' + escapeHtml(job.title || '') + '">' +
+                    escapeHtml(job.title || '') + '</div>' +
+                    '<div class="dl-item-meta">' + escapeHtml(meta) + '</div>' + bar + '</div>';
+            }).join('');
+        }
+
+        // Au chargement : adopte d'eventuelles taches lancees avant un reload
+        pollDownloads();
+
+        // Doublons (jalon 3.5) : le serveur nomme les fichiers "Artiste - Titre".
+        // Si un titre homonyme existe deja, on propose de remplacer ou d'ignorer
+        // au lieu de creer un doublon suffixe.
+        function normSongName(s) {
+            return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        }
+        function findExistingDownload(title, artist) {
+            const base = normSongName(artist + ' - ' + title);
+            for (const s of state.songs) {
+                if (normSongName((s.name || '').replace(/\.[a-z0-9]+$/i, '')) === base) return s;
+            }
+            return null;
+        }
+
         async function downloadOnlineTrack(r) {
             if (netStatus.online === false) {
                 notifyOnline('Hors ligne : telechargement impossible', true);
@@ -2698,6 +3310,15 @@
             const rowEl = document.getElementById('online-row-' + r.id);
             const btn = rowEl ? rowEl.querySelector('.dl-btn') : null;
             if (!btn || btn.disabled) return;
+            const existing = findExistingDownload(r.title, r.artist);
+            let replaceOf = '';
+            if (existing) {
+                const remplacer = confirm('« ' + existing.name + ' » est deja dans votre bibliotheque.\n\n' +
+                    'OK : remplacer (l\'ancien fichier sera efface apres le telechargement)\n' +
+                    'Annuler : ignorer, rien ne sera telecharge.');
+                if (!remplacer) return;
+                replaceOf = existing.name;
+            }
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             try {
@@ -2705,22 +3326,16 @@
                 const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: r.id, title: r.title, artist: r.artist, artwork: r.artwork })
+                    body: JSON.stringify({ id: r.id, title: r.title, artist: r.artist, artwork: r.artwork, replace_of: replaceOf })
                 });
                 const data = await res.json();
-                if (data.success) {
-                    btn.innerHTML = '<i class="fas fa-check" style="color:var(--accent)"></i>';
-                    await fetchData(true);   // rescan immédiat de la bibliotheque
-                    const stillMissing = !state.songs.some(s => s.name === data.file);
-                    if (stillMissing) {
-                        // Le fichier est telecharge mais le serveur ne le voit pas :
-                        // dossier musical mal branche (voir docker-compose, volume /music)
-                        notifyOnline('Telecharge : ' + (data.file || r.title) +
-                            ' — mais le dossier surveille (' + (state.music_dir || 'inconnu') +
-                            ') ne le voit pas. Verifiez le volume /music du docker-compose.yml.', true);
-                    } else {
-                        notifyOnline('Telecharge : ' + (data.file || r.title) + ' — visible dans votre bibliotheque.');
-                    }
+                if (data.success && data.job_id) {
+                    // Tache d'arriere-plan : la requete rend la main aussitot,
+                    // la progression s'affiche dans le panneau des notifications.
+                    btn.dataset.jobId = data.job_id;
+                    trackDownload(data.job_id, r.title, r.artist);
+                    toggleDlPanel(true);
+                    notifyOnline('Telechargement lance en arriere-plan : ' + r.title);
                 } else {
                     btn.innerHTML = '<i class="fas fa-triangle-exclamation" style="color:var(--danger)"></i>';
                     btn.disabled = false;
@@ -2756,28 +3371,70 @@
             const count = state.songs ? state.songs.length : 0;
             notifyOnline('Dossier surveille : ' + dir + ' — ' + count + ' titre' + (count > 1 ? 's' : '') + '.');
         }
+
+        // =============================================================
+        // STOCKAGE HORS LIGNE (cache media du service worker)
+        // =============================================================
+        function formatBytes(nBytes) {
+            if (!nBytes || nBytes <= 0) return '0 o';
+            const units = ['o', 'Ko', 'Mo', 'Go'];
+            let v = nBytes, u = 0;
+            while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+            return (u === 0 ? v : v.toFixed(1)) + ' ' + units[u];
+        }
+
+        async function showStorageInfo() {
+            let usedText = 'indisponible';
+            let quotaText = '';
+            try {
+                if (navigator.storage && navigator.storage.estimate) {
+                    const est = await navigator.storage.estimate();
+                    if (est && typeof est.usage === 'number') {
+                        usedText = formatBytes(est.usage);
+                        if (est.quota) {
+                            quotaText = ' sur ' + formatBytes(est.quota) + ' accordes au navigateur';
+                        }
+                    }
+                }
+            } catch (e) { /* estimation refusee : message par defaut */ }
+            notifyOnline('Stockage hors ligne occupe : ' + usedText + quotaText +
+                '. Les titres epingles (punaise) restent disponibles sans connexion.');
+        }
         
         // =============================================================
         // STATUT DE CONNEXION INTERNET
         // =============================================================
-        var netStatus = { online: null, audius_ok: false, youtube_ok: false };
+        var netStatus = { online: null, audius_ok: false, youtube_ok: false, server: null };
 
-        function applyNetStatus(data) {
+        // server = le navigateur joint le serveur ; online = le serveur a
+        // Internet. Un serveur SANS Internet reste joignable : la bibliotheque
+        // locale (disque du serveur) doit continuer de jouer normalement.
+        function applyNetStatus(data, serverOk) {
             const wasOnline = netStatus.online;
-            netStatus = { online: !!data.online, audius_ok: !!data.audius_ok, youtube_ok: !!data.youtube_ok };
+            netStatus = {
+                online: (data.online === null || data.online === undefined) ? null : !!data.online,
+                audius_ok: !!data.audius_ok,
+                youtube_ok: !!data.youtube_ok,
+                server: serverOk === undefined ? netStatus.server : !!serverOk
+            };
             const pill = document.getElementById('net-status');
             const label = document.getElementById('net-label');
             if (!pill || !label) return;
             pill.classList.remove('net-online', 'net-limited', 'net-offline');
-            if (netStatus.online && (netStatus.audius_ok || netStatus.youtube_ok)) {
+            if (netStatus.online === true && (netStatus.audius_ok || netStatus.youtube_ok)) {
                 pill.classList.add('net-online');
                 label.textContent = 'En ligne';
-            } else if (netStatus.online) {
+            } else if (netStatus.online === true) {
                 pill.classList.add('net-limited');
                 label.textContent = 'Reseau limite';
+            } else if (netStatus.online === null) {
+                // Etat inconnu (sonde en cours) : neutre, surtout PAS "hors
+                // ligne" — la lecture locale n'attend jamais cette sonde.
+                pill.classList.add('net-limited');
+                label.textContent = '…';
             } else {
                 pill.classList.add('net-offline');
-                label.textContent = 'Hors ligne';
+                label.textContent = netStatus.server === false ? 'Serveur injoignable' : 'Hors ligne';
             }
             // Retour de la connexion pendant la vue en ligne : recharger les tendances
             if (wasOnline === false && netStatus.online && currentView === 'online') {
@@ -2789,9 +3446,9 @@
             try {
                 const res = await fetch('/api/connection_status');
                 const data = await res.json();
-                applyNetStatus(data);
+                applyNetStatus(data, true);   // le serveur a repondu : joignable
             } catch (e) {
-                applyNetStatus({ online: false, audius_ok: false, youtube_ok: false });
+                applyNetStatus({ online: false, audius_ok: false, youtube_ok: false }, false);
             }
         }
         window.addEventListener('online', refreshNetStatus);
