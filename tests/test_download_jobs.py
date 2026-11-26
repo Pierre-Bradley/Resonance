@@ -98,7 +98,7 @@ def test_same_track_deduplicated(client):
 
 
 def test_youtube_route_creates_job(tmp_path, client, monkeypatch):
-    def fake_yt(job_id, track_id, title, artist, artwork_url, replace_of=''):
+    def fake_yt(job_id, track_id, title, artist, artwork_url, replace_of='', quality='192'):
         app._update_job(job_id, status='done', percent=100,
                         file=f"{artist} - {title}.mp3", speed='', eta='')
 

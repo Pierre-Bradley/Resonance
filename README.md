@@ -72,6 +72,110 @@ ce qui s'est passe, pourquoi, et quoi faire.
   La variable d'environnement RESONANCE_PROBE_INTERNET permet de sonner une
   passerelle personnelle (deploiement air-gap).
 
+## Ecoute mobile, minuteur de veille et statistiques (nouveau)
+
+- **Contrôles sur l'écran verrouillé (API Media Session)** : sur téléphone,
+  la notification système affiche désormais le titre, l'artiste et la
+  pochette du morceau en cours ; les boutons du casque, du Bluetooth et de
+  l'écran verrouillé pilotent lecture, pause, piste précédente/suivante et
+  déplacement dans le morceau (curseur de progression compris). Fonctionne
+  aussi pour les titres écoutés en ligne. C'est l'amélioration la plus
+  visible quand l'application est installée sur l'écran d'accueil : la
+  lecture ne s'arrête plus quand le navigateur passe en arrière-plan.
+- **Minuteur de veille** : le bouton lune de la barre du lecteur propose
+  15, 30 ou 60 minutes, ou la fin du titre en cours. Le temps restant
+  s'affiche en permanence à côté du bouton ; sur les vingt dernières
+  secondes le volume descend en fondu, puis la lecture se met en pause
+  (aucun son brutal au réveil). Le compte à rebours survit à un
+  rechargement de la page ; un bouton Annuler apparaît dans le minuteur.
+- **Statistiques d'écoute — Les plus écoutées** : chaque titre local
+  écouté jusqu'au bout incrémente son compteur (donnée petite, gardée
+  dans la base du serveur, elle ne quitte jamais votre machine). La
+  nouvelle vue « Les plus écoutées » du menu latéral classe les titres du
+  plus écouté au moins écouté (la recherche et le tri habituels y
+  fonctionnent), et un compteur discret (icône casque) apparaît sur
+  chaque ligne de la bibliothèque. Supprimer un titre ou remplacer un
+  doublon nettoie son compteur ; l'écoute en ligne n'est comptée qu'une
+  fois le titre téléchargé dans la bibliothèque.
+- **Minuteur au clavier** : la touche **V** ouvre directement le minuteur
+  de veille (elle figure dans l'aide-mémoire **?**).
+
+## Radio, fondu enchaine, visualiseur, playlists et sauvegarde (nouveau)
+
+- **File d'attente reordonnable** : glissez-deposez les lignes du panneau
+  « File » pour réorganiser l'ordre d'écoute ; la piste en cours reste
+  surlignée (fond doré) et l'index de lecture suit le déplacement.
+- **Radio automatique** : le bouton antenne d'une ligne construit depuis
+  ce titre une suite continue — d'abord les titres du même artiste, puis
+  du même album dans votre bibliothèque ; quand le local s'épuise, une
+  recherche en ligne complète la file (12 titres comparables) et la
+  lecture repart toute seule. Un bandeau « Radio » dans le panneau de
+  file indique qu'elle est active et permet de l'éteindre. La file reste
+  réordonnable et visible comme d'habitude. Hors ligne, la radio
+  s'arrête proprement à la fin des titres locaux.
+- **Fondu enchaîné** : la touche **B** règle le croisement entre titres
+  (désactivé, 2, 4 ou 6 secondes — réglage mémorisé, rappelé par une
+  notification à chaque appui). Les dernières secondes du titre courant
+  s'effacent pendant que le suivant monte : la piste suivante est
+  préchargée dans une seconde source audio, puis le lecteur principal
+  prend le relais exactement à la position atteinte — paroles, pochette,
+  statistiques et écran verrouillé suivent sans à-coup. Un déplacement
+  manuel ou un changement de titre annule le fondu en cours ; il est
+  suspendu quand le minuteur de veille est réglé sur « fin du titre ».
+- **Visualiseur spectral** : actif dès l'arrivée (il se met à danser au
+  premier clic, sans jamais couper le son au démarrage) — fines barres
+  dorées derrière les commandes du lecteur, branchées sur un analyseur
+  réel du contexte audio de l'égaliseur. La touche **W** (ou **Z** —
+  leur position physique s'échange entre QWERTY et AZERTY) le coupe et
+  le réactive ; le dessin est plafonné à ~30 images/s et s'arrête quand
+  rien ne joue, pour ménager la batterie des téléphones. Le réglage est
+  mémorisé.
+- **Raccourcis AZERTY** : les lettres de raccourci suivent ce qui est
+  imprimé sur le clavier, pas la position physique QWERTY — sur AZERTY,
+  la touche **M** coupée du son, la touche **W** (et **Z**) du
+  visualiseur, etc., fonctionnent telles qu'étiquetées.
+- **Import de playlist YouTube** : collez dans la recherche YouTube un
+  lien contenant `list=` — la liste s'ouvre avec des cases à cocher (les
+  titres déjà présents sont décochés et marqués « déjà présent »).
+  « Télécharger la sélection » met chaque titre coché en file
+  d'attente d'arrière-plan, dans l'ordre.
+- **Exploration en ligne sans fin** : la liste affiche 40 titres par
+  page (tendances et recherches, YouTube comme Audius) et une nouvelle
+  page se charge automatiquement quand on approche du bas — dédoublon­
+ nage inclus, arrêt propre quand la source n'a plus rien.
+- **Qualité de téléchargement** : le panneau des téléchargements offre
+  128, 192 (défaut) ou 320 kbit/s pour les conversions YouTube —
+  économie de place ou fidélité. Le choix est mémorisé et s'applique à
+  chaque téléchargement, y compris les imports de playlist.
+- **En-tête allégé** : le bouton « dossier de musique surveillé » a été
+  retiré ; le tri A-Z/Z-A tient désormais dans une flèche d'un seul
+  clic (l'ancien menu déroulant a disparu), et une icône de menu (⋯) à
+  droite regroupe les actions secondaires : Téléchargements en cours
+  (avec le badge d'avancement), Stockage hors ligne, Sauvegarde /
+  restauration.
+- **Sauvegarde / restauration** : dans le menu (⋯) de l'en-tête,
+  « Sauvegarde / restauration » exporte en un fichier JSON vos favoris,
+  playlists et statistiques — importable tel quel sur un nouveau
+  serveur, sans toucher au dossier de musique ni aux fichiers audio.
+- **Résonance du serveur** : fini la pastille d'état. Sous le titre de
+  la vue, des ondes concentriques se propagent depuis une source — le
+  nom de l'app rendu littéral. Ondes dorées régulières : le serveur a
+  Internet ; ambre qui vacille : catalogue en ligne limité ; grise et
+  lente : sondage en cours ; rouges qui se replient vers la source :
+  connexion perdue — la bibliothèque locale, elle, continue de jouer
+  sans attendre. Survolez les ondes pour le détail.
+- **Accès protégé par code (optionnel)** : définissez la variable
+  d'environnement `RESONANCE_ACCESS_CODE` (exemple commenté dans
+  docker-compose.yml) et l'application exige ce code une fois par
+  navigateur (cookie valable 30 jours) — utile dès que le serveur
+  devient joignable depuis l'extérieur du réseau local, puisque sans
+  cela n'importe qui du réseau peut lancer des téléchargements ou
+  modifier la bibliothèque. Les essais ratés sont ralentis. Pour une
+  exposition publique, ajoutez un proxy inverse HTTPS (exemple Caddy :
+  `resonance.mondomaine.fr reverse_proxy localhost:7000`, certificat
+  automatique) : lecture automatique, notification de lecture et cadres
+  YouTube se montent plus fièrement en contexte sécurisé.
+
 ## Telechargements en arriere-plan et lecture resilient (nouveau)
 
 - **Telechargements sans blocage** : cliquer un telechargement (Audius ou

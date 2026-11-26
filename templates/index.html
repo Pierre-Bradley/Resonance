@@ -80,7 +80,19 @@
         .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
         .header-left h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .app-layout, .main-content { min-width: 0; }
-        .player-info, .player-controls, .player-extra { min-width: 0; }
+        /* Visualiseur spectral (jalon 4.5) : barres derrière les commandes ;
+           le contenu du lecteur passe au-dessus grace au z-index. */
+        .player-info, .player-controls, .player-extra { min-width: 0; position: relative; z-index: 1; }
+        .viz-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.6;
+        }
+        #viz-btn.active { color: var(--accent); border-color: var(--accent); }
         .sidebar-backdrop { display: none; }
         .menu-toggle {
             display: none;
@@ -267,13 +279,22 @@
             justify-content: space-between;
             align-items: center;
             animation: slideInRight 0.5s ease;
+            /* Le menu deroulant (telechargements/stockage/sauvegarde) vit
+               dans l'en-tete : sans contexte d'empilement dedie, les lignes
+               de la liste passent dessus. */
+            position: relative;
+            z-index: 20;
         }
         .header h1 { font-size: 2rem; font-weight: 700; animation: fadeInUp 0.4s ease; }
         .header-controls { display: flex; gap: 12px; align-items: center; }
 
         .theme-toggle {
-            background: var(--input-bg);
-            border: 1px solid var(--border);
+            position: relative;   /* ancre du badge de telechargements */
+            /* Liquid glass : fond translucide + flou + reflet, pour que le
+               bouton menu (et ses voisins) ne flotte plus en transparence nue */
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.05) 55%, rgba(212, 175, 55, 0.10));
+            -webkit-backdrop-filter: blur(10px) saturate(160%);
+            backdrop-filter: blur(10px) saturate(160%);
             color: var(--text-muted);
             width: 38px; height: 38px;
             border-radius: 50%;
@@ -289,6 +310,10 @@
             border-color: var(--accent);
             transform: rotate(15deg) scale(1.1);
             box-shadow: 0 0 12px var(--accent-glow);
+        }
+        [data-theme="light"] .theme-toggle {
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.4) 55%, rgba(161, 125, 23, 0.10));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(30, 41, 59, 0.14);
         }
         .search-wrapper { display: flex; align-items: center; gap: 8px; position: relative; }
         .search-bar {
@@ -308,7 +333,7 @@
             box-shadow: 0 0 0 3px var(--accent-glow);
         }
         .search-icon { position: absolute; left: 14px; color: var(--text-muted); font-size: 0.85rem; pointer-events: none; }
-        .search-type-select, .sort-select {
+        .search-type-select {
             background: var(--input-bg);
             border: 1px solid var(--border);
             color: var(--text-main);
@@ -614,21 +639,6 @@
         }
         .dl-item.error .dl-bar-fill { background: var(--danger); }
         .dl-empty { color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 20px 0; }
-        .dl-toggle {
-            position: relative;
-            background: var(--input-bg);
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            width: 38px; height: 38px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center; justify-content: center;
-            font-size: 1rem;
-            flex-shrink: 0;
-            transition: all 0.3s ease;
-        }
-        .dl-toggle:hover, .dl-toggle.active { color: var(--accent); border-color: var(--accent); }
         .dl-badge {
             position: absolute;
             top: -5px; right: -5px;
@@ -666,6 +676,12 @@
             color: var(--accent);
             white-space: nowrap;
         }
+        .shortcuts-note {
+            font-size: 0.78rem;
+            line-height: 1.5;
+            color: var(--text-muted);
+            margin: -8px 0 14px;
+        }
         .queue-header {
             display: flex;
             justify-content: space-between;
@@ -681,6 +697,29 @@
             background: var(--input-bg);
             padding: 2px 10px;
             border-radius: 12px;
+        }
+        /* Radio automatique (jalon 4.4) : bandeau d'etat dans le panneau de file */
+        .radio-strip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 12px 0;
+            padding: 6px 10px;
+            border: 1px dashed rgba(212, 175, 55, 0.5);
+            border-radius: 10px;
+            background: rgba(212, 175, 55, 0.10);
+            color: var(--accent);
+            font-size: 0.78rem;
+            letter-spacing: 0.5px;
+        }
+        .radio-strip i { font-size: 0.8rem; }
+        .radio-strip .action-btn {
+            margin-left: auto;
+            color: var(--accent);
+            font-size: 0.85rem;
+            background: none;
+            border: none;
+            cursor: pointer;
         }
         .queue-list { flex: 1; overflow-y: auto; }
         .queue-item {
@@ -1102,8 +1141,6 @@
             }
             #playlists-container { max-height: none !important; flex: 1; }
             .online-badge { display: none; }
-            .net-label { display: none; }
-            .net-status { padding: 8px 10px; }
             .source-btn span { display: none; }
             .source-btn { padding: 6px 10px; }
             .control-buttons { gap: 12px; }
@@ -1133,6 +1170,10 @@
             .ctrl-btn { padding: 4px; font-size: 1.05rem; }
             .play-btn { font-size: 1.8rem; }
             #btn-shuffle, #btn-repeat { display: none; }
+            /* Jalons 4.5 : deux nouveaux boutons (visualiseur, fondu) — on masque
+               EQ et clip, modales peu utilisees en mobilité, pour garder la barre
+               dans 375px. Elles restent accessibles via le clavier (C) sur desktop. */
+            #eq-btn, #clip-btn { display: none; }
             .player-btn { padding: 6px; }
             .player-btn .btn-label { display: none; }
             #volume-icon, #volume-slider { display: none; }
@@ -1212,7 +1253,7 @@
         }
 
         /* Controles : verre tactile */
-        .search-bar, .search-type-select, .sort-select,
+        .search-bar, .search-type-select,
         .modal input, .modal select, .player-btn,
         .theme-toggle, .menu-toggle, .eq-value, .queue-count {
             border: 1px solid var(--glass-border) !important;
@@ -1260,7 +1301,6 @@
         /* Accessibilite : mouvement reduit */
         @media (prefers-reduced-motion: reduce) {
             .ambient span { animation: none; }
-            .net-status .net-dot { animation: none !important; }
             .brand-logo.playing, .player-cover, .song-row, .queue-item { animation: none !important; }
         }
         /* SELECTEUR DE SOURCE EN LIGNE */
@@ -1298,40 +1338,62 @@
             box-shadow: 0 0 12px var(--accent-glow);
         }
 
-        /* STATUT DE CONNEXION INTERNET */
-        .net-status {
+        /* RESONANCE DU SERVEUR : ondes concentriques sous le titre de la vue.
+           Des cercles partent d'une source et se propagent — or régulier =
+           le serveur a Internet ; ambre qui vacille = catalogue en ligne
+           limite ; gris lent = sondage en cours ; rouge qui se replie vers
+           la source = plus de connexion (la bibliotheque locale, elle,
+           continue de jouer). */
+        .title-wrap { min-width: 0; }
+        .server-pulse {
+            display: block;
+            width: 150px;
+            height: 26px;
+            margin-top: 2px;
+            pointer-events: auto;
+            opacity: 0.95;
+        }
+        @media (max-width: 600px) { .server-pulse { width: 118px; height: 20px; } }
+
+        /* MENU D'ENTETE (telechargements / stockage / sauvegarde) */
+        .header-menu-wrap { position: relative; flex-shrink: 0; }
+        .header-menu {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 10px);
+            min-width: 250px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            z-index: 80;
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+            animation: fadeInUp 0.18s ease;
+        }
+        .header-menu.hidden { display: none; }
+        .header-menu-item {
             display: flex;
             align-items: center;
-            gap: 8px;
-            background: var(--input-bg);
-            border: 1px solid var(--glass-border);
-            padding: 8px 14px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            white-space: nowrap;
-            cursor: default;
-            flex-shrink: 0;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.18);
+            gap: 12px;
+            width: 100%;
+            padding: 11px 14px;
+            border: none;
+            border-radius: 11px;
+            background: none;
+            color: var(--text-primary);
+            font-size: 0.88rem;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.15s;
         }
-        .net-dot {
-            width: 9px; height: 9px;
-            border-radius: 50%;
-            background: var(--text-muted);
-            flex-shrink: 0;
-        }
-        .net-status.net-online .net-dot {
-            background: #22c55e;
-            animation: net-pulse 2.4s ease-in-out infinite;
-        }
-        .net-status.net-limited .net-dot { background: #f59e0b; }
-        .net-status.net-limited { color: #f59e0b; }
-        .net-status.net-offline .net-dot { background: var(--danger); }
-        .net-status.net-offline { color: var(--danger); border-color: rgba(239, 68, 68, 0.45); }
-        @keyframes net-pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-            50%      { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); }
-        }
+        .header-menu-item:hover { background: var(--row-hover); }
+        .header-menu-item i { color: var(--accent); width: 18px; text-align: center; }
+        .header-menu-item .dl-badge { position: static; margin-left: auto; }
 
         /* EXPLORATION EN LIGNE */
         .online-loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 1rem; }
@@ -1346,6 +1408,104 @@
             border-radius: 10px;
             margin-right: 8px;
             flex-shrink: 0;
+        }
+
+        /* MINUTEUR DE VEILLE (jalon 4.2) */
+        .sleep-wrap { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+        .sleep-remaining {
+            font-size: 0.72rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--accent);
+            background: rgba(201, 162, 39, 0.12);
+            border: 1px solid rgba(201, 162, 39, 0.35);
+            padding: 2px 7px;
+            border-radius: 12px;
+            white-space: nowrap;
+        }
+        #sleep-btn.armed { color: var(--accent); }
+        .sleep-options { display: flex; flex-direction: column; gap: 8px; margin: 18px 0 6px; }
+        .sleep-option {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 11px 14px;
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            background: var(--input-bg);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            text-align: left;
+            cursor: pointer;
+            transition: border-color .2s, background .2s, transform .2s;
+        }
+        .sleep-option:hover { border-color: var(--accent); transform: translateY(-1px); }
+        .sleep-option i { color: var(--accent); width: 20px; text-align: center; }
+        .sleep-option small { margin-left: auto; color: var(--text-muted); font-size: 0.72rem; }
+        .sleep-option.cancel { border-color: rgba(239, 68, 68, 0.4); }
+        .sleep-option.cancel i { color: var(--danger); }
+        .sleep-option.cancel:hover { border-color: var(--danger); }
+
+        /* STATISTIQUES D'ECOUTE (jalon 4.3) */
+        .play-count {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            opacity: 0.85;
+            white-space: nowrap;
+        }
+        .play-count i { margin-right: 3px; font-size: 0.62rem; }
+        .song-row.playing .play-count { color: var(--accent); }
+
+        /* IMPORT PLAYLIST YOUTUBE (jalon 4.6) */
+        .playlist-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 14px 0 8px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .playlist-checkall { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+        .playlist-checkall input { accent-color: var(--accent); }
+        .playlist-count { font-size: 0.75rem; }
+        .playlist-import-list {
+            max-height: 320px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            background: var(--input-bg);
+        }
+        .playlist-item input { accent-color: var(--accent); flex-shrink: 0; }
+        .playlist-item img { width: 42px; height: 24px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+        .playlist-item .pl-title { flex: 1; min-width: 0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .playlist-item .pl-sub { font-size: 0.7rem; color: var(--text-muted); }
+        .playlist-item.already { opacity: 0.55; }
+        .playlist-item .pl-badge {
+            font-size: 0.62rem;
+            color: var(--accent);
+            border: 1px solid rgba(212, 175, 55, 0.4);
+            padding: 1px 6px;
+            border-radius: 8px;
+            white-space: nowrap;
+        }
+        .dl-quality-select {
+            background: var(--input-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            font-size: 0.72rem;
+            padding: 3px 6px;
+            cursor: pointer;
         }
     </style>
 <base target="_blank">
@@ -1384,6 +1544,9 @@
         <div class="nav-item" id="nav-albums" onclick="changeView('albums', 'Par Album')">
             <div class="nav-item-content"><i class="fas fa-compact-disc"></i> Par Album</div>
         </div>
+        <div class="nav-item" id="nav-top" onclick="changeView('top', 'Les plus ecoutees')">
+            <div class="nav-item-content"><i class="fas fa-crown"></i> Les plus ecoutees</div>
+        </div>
         <div class="nav-item" id="nav-online" onclick="changeView('online', 'Explorer en ligne')">
             <div class="nav-item-content"><i class="fas fa-globe"></i> Explorer en ligne</div>
         </div>
@@ -1401,12 +1564,15 @@
                     <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()" title="Menu">
                         <i class="fas fa-bars"></i>
                     </button>
-                    <h1 id="view-title">Toutes les pistes</h1>
+                    <div class="title-wrap">
+                        <h1 id="view-title">Toutes les pistes</h1>
+                        <!-- Resonance du serveur : des ondes concentriques partent
+                             de la source quand le serveur a Internet ; elles se
+                             replient en rouge-gris sans connexion. -->
+                        <canvas id="server-pulse" class="server-pulse" title="Resonance du serveur"></canvas>
+                    </div>
                 </div>
                 <div class="header-controls">
-                    <div class="net-status" id="net-status" title="Etat de la connexion internet">
-                        <span class="net-dot"></span><span class="net-label" id="net-label">Connexion...</span>
-                    </div>
                     <div class="source-toggle" id="source-toggle" style="display:none;">
                         <button class="source-btn active" id="src-youtube" onclick="setOnlineSource('youtube')" title="Catalogue complet YouTube"><i class="fab fa-youtube"></i><span>YouTube</span></button>
                         <button class="source-btn" id="src-audius" onclick="setOnlineSource('audius')" title="Musique libre Audius"><i class="fas fa-fire"></i><span>Audius</span></button>
@@ -1422,31 +1588,36 @@
                         <option value="album">Album</option>
                         <option value="genre">Genre</option>
                     </select>
-                    <select id="sort-select" class="sort-select" onchange="handleSort()">
-                        <option value="default">Par defaut</option>
-                        <option value="az">De A a Z</option>
-                        <option value="za">De Z a A</option>
-                        <option value="newest">Ajouts Recents</option>
-                    </select>
+                    <button class="theme-toggle" id="sort-dir-btn" onclick="toggleSortDir()" title="Trier de A a Z (cliquer pour inverser)">
+                        <i class="fas fa-arrow-down-a-z" id="sort-dir-icon"></i>
+                    </button>
                     <button class="theme-toggle" id="refresh-library-btn" onclick="refreshLibrary()" title="Actualiser la bibliotheque (rescanner le dossier de musique)">
                         <i class="fas fa-rotate-right" id="refresh-library-icon"></i>
                     </button>
-                    <button class="dl-toggle" id="dl-toggle" onclick="toggleDlPanel()" title="Telechargements en cours">
-                        <i class="fas fa-cloud-arrow-down"></i>
-                        <span class="dl-badge hidden" id="dl-badge">0</span>
-                    </button>
-                    <button class="theme-toggle" onclick="openModal('shortcuts-modal')" title="Raccourcis clavier (aide-memoire)">
+                    <button class="theme-toggle" id="shortcuts-btn" onclick="openModal('shortcuts-modal')" title="Raccourcis clavier (aide-memoire)">
                         <i class="fas fa-keyboard"></i>
-                    </button>
-                    <button class="theme-toggle" id="library-dir-btn" onclick="showLibraryDir()" title="Dossier de musique surveille par le serveur">
-                        <i class="fas fa-folder-open"></i>
-                    </button>
-                    <button class="theme-toggle" id="storage-btn" onclick="showStorageInfo()" title="Stockage hors ligne occupe par l'application">
-                        <i class="fas fa-database"></i>
                     </button>
                     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Basculer le theme">
                         <i class="fas fa-sun" id="theme-icon"></i>
                     </button>
+                    <div class="header-menu-wrap" id="header-menu-wrap">
+                        <button class="theme-toggle" id="header-menu-btn" onclick="toggleHeaderMenu(event)" title="Telechargements en cours, stockage, sauvegarde">
+                            <i class="fas fa-ellipsis-vertical"></i>
+                            <span class="dl-badge hidden" id="dl-badge">0</span>
+                        </button>
+                        <div class="header-menu hidden" id="header-menu">
+                            <button class="header-menu-item" onclick="menuOpenDl()">
+                                <i class="fas fa-cloud-arrow-down"></i> Telechargements en cours
+                                <span class="dl-badge hidden" id="dl-badge-menu">0</span>
+                            </button>
+                            <button class="header-menu-item" onclick="menuRun(showStorageInfo)">
+                                <i class="fas fa-database"></i> Stockage hors ligne
+                            </button>
+                            <button class="header-menu-item" onclick="menuRun(openBackupModal)">
+                                <i class="fas fa-box-archive"></i> Sauvegarde / restauration
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="playlist-view" id="track-list"></div>
@@ -1470,12 +1641,21 @@
                 <h3><i class="fas fa-list-ol"></i> File d'attente</h3>
                 <span class="queue-count" id="queue-count">0</span>
             </div>
+            <div class="radio-strip hidden" id="radio-strip" title="La radio complete la file quand elle s'epuise">
+                <i class="fas fa-tower-broadcast"></i> Radio
+                <button class="action-btn" onclick="stopRadio()" title="Eteindre la radio (la file restante reste jouable)"><i class="fas fa-power-off"></i></button>
+            </div>
             <div class="queue-list" id="queue-list"></div>
         </aside>
 
         <aside class="dl-panel hidden" id="dl-panel">
             <div class="dl-header">
                 <h3><i class="fas fa-cloud-arrow-down"></i> Telechargements</h3>
+                <select id="dl-quality" class="dl-quality-select" title="Qualite mp3 des telechargements YouTube (economie ou fidelite)" onchange="saveDlQuality()">
+                    <option value="128">128 kbps</option>
+                    <option value="192" selected>192 kbps</option>
+                    <option value="320">320 kbps</option>
+                </select>
                 <button class="action-btn" onclick="toggleDlPanel()" title="Fermer"><i class="fas fa-times"></i></button>
             </div>
             <div class="dl-list" id="dl-list">
@@ -1485,6 +1665,8 @@
     </div>
 
     <footer class="player-bar">
+        <!-- Visualiseur spectral (jalon 4.5) : fines barres derriere les commandes -->
+        <canvas id="viz-canvas" class="viz-canvas hidden"></canvas>
         <div class="player-info">
             <img class="player-cover" id="player-cover" src="" alt="" style="display:none;">
             <div class="player-cover empty" id="player-cover-empty"><i class="fas fa-music"></i></div>
@@ -1519,6 +1701,13 @@
             <button class="player-btn" id="clip-btn" onclick="openClipModal()" title="Voir le clip (ou la pochette)">
                 <i class="fas fa-film"></i>
             </button>
+            <button class="player-btn" id="sleep-btn" onclick="openSleepModal()" title="Minuteur de veille (arreter la musique plus tard) — raccourci V">
+                <i class="fas fa-moon"></i>
+            </button>
+            <span class="sleep-remaining hidden" id="sleep-remaining"></span>
+            <button class="player-btn" id="viz-btn" onclick="toggleVisualizer()" title="Visualiseur spectral (barres qui dansent avec la musique) — raccourci W">
+                <i class="fas fa-wave-square"></i>
+            </button>
             <i class="fas fa-volume-up" id="volume-icon"></i>
             <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.01" value="1" oninput="changeVolume()">
         </div>
@@ -1535,10 +1724,83 @@
                 <div><span>Favori</span><kbd>F</kbd></div>
                 <div><span>Paroles</span><kbd>L</kbd></div>
                 <div><span>Clip video</span><kbd>C</kbd></div>
+                <div><span>Minuteur de veille</span><kbd>V</kbd></div>
+                <div><span>Fondu enchaine (off / 2 / 4 / 6 s)</span><kbd>B</kbd></div>
+                <div><span>Visualiseur spectral</span><kbd>W / Z</kbd></div>
                 <div><span>Cet aide-memoire</span><kbd>?</kbd></div>
             </div>
+            <div class="shortcuts-note">Les raccourcis suivent la lettre imprimee sur le clavier — AZERTY inclus. W et Z ouvrent tous deux le visualiseur (leur position physique s'echange entre QWERTY et AZERTY).</div>
             <div class="modal-btns">
                 <button class="btn btn-cancel" onclick="closeModal('shortcuts-modal')">Fermer</button>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="sleep-modal" onclick="if (event.target === this) closeModal('sleep-modal')">
+        <div class="modal">
+            <h3><i class="fas fa-moon"></i> Minuteur de veille</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-top:6px;">
+                Arrete la lecture apres la duree choisie. Le volume baisse
+                progressivement sur les dernieres secondes, puis la musique se met en pause.
+            </p>
+            <div class="sleep-options">
+                <button class="sleep-option" onclick="armSleepTimer(15)">
+                    <i class="fas fa-hourglass-half"></i> 15 minutes
+                </button>
+                <button class="sleep-option" onclick="armSleepTimer(30)">
+                    <i class="fas fa-hourglass-half"></i> 30 minutes
+                </button>
+                <button class="sleep-option" onclick="armSleepTimer(60)">
+                    <i class="fas fa-hourglass-half"></i> 60 minutes
+                </button>
+                <button class="sleep-option" onclick="armSleepEndOfTrack()">
+                    <i class="fas fa-forward"></i> Fin du titre en cours
+                </button>
+                <button class="sleep-option cancel hidden" id="sleep-cancel-option" onclick="cancelSleepTimer(true)">
+                    <i class="fas fa-ban"></i> Annuler le minuteur <small id="sleep-cancel-remaining"></small>
+                </button>
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-cancel" onclick="closeModal('sleep-modal')">Fermer</button>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="playlist-modal" onclick="if (event.target === this) closeModal('playlist-modal')">
+        <div class="modal">
+            <h3><i class="fab fa-youtube"></i> <span id="playlist-modal-title">Importer une playlist YouTube</span></h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-top:6px;">
+                Cochez les titres a telecharger — ils passeront un par un en arriere-plan,
+                a la qualite choisie dans le panneau des telechargements.
+            </p>
+            <div class="playlist-toolbar">
+                <label class="playlist-checkall"><input type="checkbox" id="playlist-checkall" checked onchange="playlistToggleAll()"> Tout cocher</label>
+                <span class="playlist-count" id="playlist-count"></span>
+            </div>
+            <div class="playlist-import-list" id="playlist-import-list"></div>
+            <div class="modal-btns">
+                <button class="btn btn-cancel" onclick="closeModal('playlist-modal')">Annuler</button>
+                <button class="btn btn-primary" id="playlist-import-btn" onclick="importPlaylistSelection()"><i class="fas fa-download"></i> Telecharger la selection</button>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="backup-modal" onclick="if (event.target === this) closeModal('backup-modal')">
+        <div class="modal">
+            <h3><i class="fas fa-box-archive"></i> Sauvegarde des donnees</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-top:6px;">
+                Favoris, playlists et statistiques d'ecoute — sans les fichiers musicaux.
+                Pour installer vos donnees sur un nouveau serveur : exportez ici, puis
+                importez le fichier obtenu (le dossier de musique reste intact).
+            </p>
+            <div class="sleep-options">
+                <button class="sleep-option" onclick="exportBackup()">
+                    <i class="fas fa-file-export"></i> Exporter en JSON <small id="backup-summary"></small>
+                </button>
+                <button class="sleep-option" onclick="document.getElementById('backup-file-input').click()">
+                    <i class="fas fa-file-import"></i> Importer un fichier de sauvegarde
+                </button>
+                <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="importBackupFile(this)">
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-cancel" onclick="closeModal('backup-modal')">Fermer</button>
             </div>
         </div>
     </div>
@@ -1636,7 +1898,7 @@
 
     <script>
 
-        let state = { songs: [], favorites: [], playlists: {} };
+        let state = { songs: [], favorites: [], playlists: {}, play_counts: {} };
         let displayedSongs = [];
         let currentView = 'all';
         let currentPlayingPath = "";
@@ -1648,7 +1910,7 @@
         let isRepeat = false;
         let searchQuery = "";
         let searchType = "all";
-        let currentSort = "default";
+        let currentSort = "az";   // fleche de tri : de A a Z par defaut
         let lyricsVisible = false;
         let queue = [];
         let queueCurrentIndex = -1;
@@ -1722,8 +1984,17 @@
             if (currentView === 'online') { doOnlineSearch(); return; }
             renderTracks();
         }
-        function handleSort() {
-            currentSort = document.getElementById('sort-select').value;
+        // Fleche de tri (remplace l'ancien select) : un clic inverse le sens.
+        function toggleSortDir() {
+            currentSort = currentSort === 'az' ? 'za' : 'az';
+            const btn = document.getElementById('sort-dir-btn');
+            const icon = document.getElementById('sort-dir-icon');
+            if (icon) {
+                icon.className = currentSort === 'az' ? 'fas fa-arrow-down-a-z' : 'fas fa-arrow-up-a-z';
+                if (btn) btn.title = currentSort === 'az'
+                    ? 'Trier de A a Z (cliquer pour inverser)'
+                    : 'Trier de Z a A (cliquer pour inverser)';
+            }
             renderTracks();
         }
         function matchesSearch(song) {
@@ -1754,6 +2025,7 @@
             else if (viewType === 'fav') document.getElementById('nav-fav').classList.add('active');
             else if (viewType === 'artists') document.getElementById('nav-artists').classList.add('active');
             else if (viewType === 'albums') document.getElementById('nav-albums').classList.add('active');
+            else if (viewType === 'top') document.getElementById('nav-top').classList.add('active');
             else if (viewType === 'online') document.getElementById('nav-online').classList.add('active');
             else {
                 const el = document.getElementById('nav-pl-' + viewType);
@@ -1764,9 +2036,8 @@
                 isOnline ? (onlineSource === 'youtube' ? 'Rechercher sur YouTube...' : 'Rechercher sur Audius...') : 'Rechercher...';
             // Correction de l'inversion : filtre et tri caches UNIQUEMENT en ligne
             document.getElementById('search-type').style.display = isOnline ? 'none' : '';
-            document.getElementById('sort-select').style.display = isOnline ? 'none' : '';
+            document.getElementById('sort-dir-btn').style.display = isOnline ? 'none' : '';
             document.getElementById('refresh-library-btn').style.display = isOnline ? 'none' : '';
-            document.getElementById('library-dir-btn').style.display = isOnline ? 'none' : '';
             document.getElementById('source-toggle').style.display = isOnline ? 'flex' : 'none';
             if (isOnline) {
                 onlineSearched = false;
@@ -1809,6 +2080,18 @@
             else if (currentView === 'fav') list = state.songs.filter(s => state.favorites.includes(s.path));
             else if (currentView === 'artists') list = [...state.songs];
             else if (currentView === 'albums') list = [...state.songs];
+            // Les plus ecoutees (jalon 4.3) : titres comptes, classes par
+            // nombre d'ecoutes puis par ecoute la plus recente.
+            else if (currentView === 'top') {
+                const counts = state.play_counts || {};
+                list = state.songs.filter(s => counts[s.path] && counts[s.path].plays > 0);
+                list.sort((a, b) => {
+                    const ca = counts[a.path] || { plays: 0, last: 0 };
+                    const cb = counts[b.path] || { plays: 0, last: 0 };
+                    if (cb.plays !== ca.plays) return cb.plays - ca.plays;
+                    return (cb.last || 0) - (ca.last || 0);
+                });
+            }
             else {
                 const plSongs = state.playlists[currentView] || [];
                 list = state.songs.filter(s => plSongs.includes(s.path));
@@ -1816,14 +2099,16 @@
             if (searchQuery) list = list.filter(matchesSearch);
             if (currentSort === 'az') list.sort((a, b) => a.title.localeCompare(b.title));
             else if (currentSort === 'za') list.sort((a, b) => b.title.localeCompare(a.title));
-            else if (currentSort === 'newest') list.sort((a, b) => b.mtime - a.mtime);
             displayedSongs = list;
 
             if (displayedSongs.length === 0) {
+                const topMsg = searchQuery
+                    ? 'Aucun resultat pour cette recherche.'
+                    : 'Aucune ecoute comptee pour le moment.<br><small style="font-size:0.8rem;">Les titres ecoutes jusqu\'au bout gagnent un compteur et apparaissent ici, classes du plus ecoute au moins ecoute.</small>';
                 trackList.innerHTML = `
                     <div style="text-align:center; padding:60px; color:var(--text-muted); animation: fadeInUp 0.5s ease;">
-                        <i class="fas fa-folder-open" style="font-size: 2.5rem; margin-bottom: 15px; display:block;"></i>
-                        Aucune musique trouvee.
+                        <i class="fas ${currentView === 'top' ? 'fa-crown' : 'fa-folder-open'}" style="font-size: 2.5rem; margin-bottom: 15px; display:block;"></i>
+                        ${currentView === 'top' ? topMsg : 'Aucune musique trouvee.'}
                     </div>`;
                 return;
             }
@@ -1869,6 +2154,11 @@
             const coverHtml = coverUrl
                 ? '<img class="song-cover-thumb" src="' + coverUrl + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
                 : '<div class="song-cover-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:0.9rem;"><i class="fas fa-music"></i></div>';
+            // Compteur discret d'ecoutes (jalon 4.3)
+            const plays = (state.play_counts && state.play_counts[song.path] && state.play_counts[song.path].plays) || 0;
+            const countHtml = plays > 0
+                ? ' <span class="play-count" title="Ecout' + (plays > 1 ? 'es' : 'e') + ' ' + plays + ' fois"><i class="fas fa-headphones"></i>' + plays + '</span>'
+                : '';
             let extraActionBtn = '';
             if (currentView !== 'all' && currentView !== 'fav' && currentView !== 'artists' && currentView !== 'albums') {
                 extraActionBtn = '<button class="action-btn text-danger" title="Retirer" onclick="event.stopPropagation(); removeSongFromPlaylist(\'' + escapeJs(currentView) + '\', \'' + escapeJs(song.path) + '\')"><i class="fas fa-minus-circle"></i></button>';
@@ -1879,9 +2169,10 @@
                 </button>
                 <div class="song-info" ondblclick="playSong('${escapeJs(song.path)}', '${escapeJs(song.title)}', '${escapeJs(song.artist)}')">
                     ${escapeHtml(song.title)}
-                    <span class="song-meta">— ${escapeHtml(song.artist)} &middot; ${escapeHtml(song.album)}</span>
+                    <span class="song-meta">— ${escapeHtml(song.artist)} &middot; ${escapeHtml(song.album)}${countHtml}</span>
                 </div>
                 <div class="song-actions">
+                    <button class="action-btn" title="Radio : suite continue depuis ce titre (meme artiste, puis en ligne)" onclick="event.stopPropagation(); startRadioFromSong(state.songs.find(s => s.path === '${escapeJs(song.path)}') || {path: '${escapeJs(song.path)}', title: '${escapeJs(song.title)}', artist: '${escapeJs(song.artist)}', album: ''})"><i class="fas fa-tower-broadcast"></i></button>
                     <button class="action-btn text-danger" title="Supprimer (efface le fichier du disque et du stockage hors ligne)" onclick="event.stopPropagation(); deleteSong('${escapeJs(song.path)}', '${escapeJs(song.title)}')"><i class="fas fa-trash"></i></button>
                     <button class="action-btn" title="Ecouter ensuite" onclick="event.stopPropagation(); addToQueueNext('${escapeJs(song.path)}')"><i class="fas fa-step-forward"></i></button>
                     <button class="action-btn" title="Editer" onclick="event.stopPropagation(); openMetadataModal('${escapeJs(song.path)}')"><i class="fas fa-pen"></i></button>
@@ -1907,6 +2198,7 @@
         // =============================================================
         function playSong(path, title, artist) {
             if (currentPlayingPath === path) { togglePlayPause(); return; }
+            cancelCrossfade();   // changement manuel de titre : le fondu en cours s'annule
             currentOnlineId = null;
             currentPlayingPath = path;
             currentPlayingName = title;
@@ -1921,6 +2213,7 @@
             renderTracks();
             renderQueue();
             updateCoverDisplay(path);
+            updateMediaSessionForLocal(path, title, artist);
             if (lyricsVisible) fetchLyrics(title);
         }
 
@@ -1971,6 +2264,12 @@
                 playQueueItem(queue[queueCurrentIndex]);
                 return;
             }
+            // Radio (jalon 4.4) : la file s'epuise -> completion en ligne, qui
+            // relancera la lecture elle-meme une fois les titres ajoutes.
+            if (radioMode && queue.length > 0) {
+                radioFetchOnline();
+                return;
+            }
             // Enchainement des resultats en ligne (tendances ou recherche)
             if (currentPlayingPath && currentPlayingPath.indexOf('online:') === 0 && onlineResults.length > 0) {
                 let idx = onlineResults.findIndex(x => x.id === currentOnlineId);
@@ -2016,6 +2315,8 @@
         function changeVolume() {
             const val = document.getElementById('volume-slider').value;
             audioPlayer.volume = val;
+            // Minuteur de veille : le fondu part de la nouvelle base
+            if (sleepTimer) sleepTimer.baseVolume = parseFloat(val);
             const icon = document.getElementById('volume-icon');
             if (val == 0) icon.className = 'fas fa-volume-mute';
             else if (val < 0.5) icon.className = 'fas fa-volume-down';
@@ -2030,11 +2331,25 @@
                 document.getElementById('now-playing-time').innerText = fmt(audioPlayer.currentTime) + ' / ' + fmt(audioPlayer.duration);
             }
             if (lyricsVisible && lyricsLines.length) updateLyricsHighlight(true);
+            // Curseur de l'ecran verrouille (jalon 4.1)
+            updateMediaPositionState();
+            // Minuteur "fin du titre" (jalon 4.2) : couvre aussi le mode boucle,
+            // qui relance la piste sans jamais emettre l'evenement 'ended'.
+            if (sleepTimer && sleepTimer.trackEnd &&
+                audioPlayer.duration && audioPlayer.currentTime >= audioPlayer.duration - 0.6) {
+                stopAtSleepEnd();
+            }
+            // Fondu enchaine (jalon 4.5) : lance le croisement a l'approche de la fin
+            maybeStartCrossfade();
         });
         audioPlayer.addEventListener('play', () => { updateWaveAnimation(); updatePlayBtnUI(); });
-        audioPlayer.addEventListener('pause', () => { updateWaveAnimation(); updatePlayBtnUI(); });
+        audioPlayer.addEventListener('pause', () => { updateWaveAnimation(); updatePlayBtnUI(); cancelCrossfade(); });
         audioPlayer.addEventListener('ended', () => {
             updateWaveAnimation();
+            // Statistiques d'ecoute (jalon 4.3) : la fin d'un titre compte
+            recordListen(currentPlayingPath);
+            // Minuteur de veille "fin du titre" (jalon 4.2)
+            if (sleepTimer && sleepTimer.trackEnd) { stopAtSleepEnd(); return; }
             if (!isRepeat) playNext();
         });
         // Lecture resiliente (jalon 3.4) : une erreur de flux ne casse plus
@@ -2110,9 +2425,227 @@
 
         function seek(event) {
             if (!audioPlayer.duration) return;
+            cancelCrossfade();   // deplacement manuel : le fondu n'a plus de sens
             const rect = event.currentTarget.getBoundingClientRect();
             const percent = (event.clientX - rect.left) / rect.width;
             audioPlayer.currentTime = percent * audioPlayer.duration;
+        }
+
+        // =============================================================
+        // MEDIA SESSION (jalon 4.1) : notification de lecture, boutons du
+        // casque et de l'ecran verrouille. Sans cela, un telephone n'affiche
+        // ni titre ni pochette et coupe souvent la lecture en arriere-plan.
+        // =============================================================
+        function updateMediaSessionMetadata(title, artist, album, artworkUrl) {
+            if (!('mediaSession' in navigator)) return;
+            const artwork = [];
+            if (artworkUrl) {
+                // le casque/notification recupere l'image : URL absolue exigee
+                const abs = /^https?:/.test(artworkUrl)
+                    ? artworkUrl
+                    : new URL(artworkUrl, window.location.href).href;
+                artwork.push({ src: abs, sizes: '512x512' });
+            }
+            try {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: title || 'RESONANCE',
+                    artist: artist || '',
+                    album: album || 'RESONANCE',
+                    artwork: artwork
+                });
+            } catch (e) { /* MediaMetadata indisponible : sans consequence */ }
+        }
+
+        // Piste locale : pochette et album depuis la bibliotheque
+        function updateMediaSessionForLocal(path, title, artist) {
+            const song = state.songs.find(s => s.path === path);
+            const coverUrl = (song && song.has_cover) ? '/api/cover/' + encodeURIComponent(path) : null;
+            updateMediaSessionMetadata(title, artist, song ? song.album : '', coverUrl);
+        }
+
+        // Piste en ligne : pochette fournie par la source (Audius/YouTube)
+        function updateMediaSessionForOnline(r) {
+            updateMediaSessionMetadata(r.title, r.artist, '', r.artwork || null);
+        }
+
+        // Curseur de l'ecran verrouille : duree + position exactes
+        function updateMediaPositionState() {
+            if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+            if (!audioPlayer.duration || !isFinite(audioPlayer.duration)) return;
+            try {
+                navigator.mediaSession.setPositionState({
+                    duration: audioPlayer.duration,
+                    playbackRate: audioPlayer.playbackRate || 1,
+                    position: Math.min(audioPlayer.currentTime || 0, audioPlayer.duration)
+                });
+            } catch (e) { /* position invalide : sans consequence */ }
+        }
+
+        if ('mediaSession' in navigator) {
+            const ms = navigator.mediaSession;
+            const on = (action, fn) => { try { ms.setActionHandler(action, fn); } catch (e) { /* action non geree par ce navigateur */ } };
+            on('play', () => audioPlayer.play());
+            on('pause', () => audioPlayer.pause());
+            on('stop', () => audioPlayer.pause());
+            on('previoustrack', () => playPrev());
+            on('nexttrack', () => playNext());
+            on('seekto', (d) => {
+                if (d.seekTime !== undefined && audioPlayer.duration) {
+                    audioPlayer.currentTime = Math.max(0, Math.min(d.seekTime, audioPlayer.duration));
+                }
+            });
+            on('seekbackward', (d) => {
+                audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - (d.seekOffset || 10));
+            });
+            on('seekforward', (d) => {
+                if (audioPlayer.duration) audioPlayer.currentTime = Math.min(audioPlayer.duration, audioPlayer.currentTime + (d.seekOffset || 10));
+            });
+        }
+        audioPlayer.addEventListener('play', updateMediaPositionState);
+        audioPlayer.addEventListener('loadedmetadata', updateMediaPositionState);
+
+        // =============================================================
+        // MINUTEUR DE VEILLE (jalon 4.2) : arrete la lecture apres 15/30/60
+        // minutes ou a la fin du titre, avec un fondu de volume sur les
+        // dernieres secondes. Entierement cote navigateur.
+        // =============================================================
+        const SLEEP_FADE_SECONDS = 20;              // fondu sur les 20 dernieres secondes
+        const SLEEP_STORAGE_KEY = 'resonance-sleep';
+        let sleepTimer = null;                      // {endsAt, trackEnd, baseVolume, tick}
+
+        function sleepBaseVolume() {
+            const v = parseFloat(document.getElementById('volume-slider').value);
+            return isNaN(v) ? 1 : v;
+        }
+
+        function armSleepTimer(minutes) {
+            cancelSleepTimer(true);                 // un seul minuteur a la fois
+            sleepTimer = {
+                endsAt: Date.now() + minutes * 60000,
+                trackEnd: false,
+                baseVolume: sleepBaseVolume(),
+                tick: null
+            };
+            localStorage.setItem(SLEEP_STORAGE_KEY, JSON.stringify({ endsAt: sleepTimer.endsAt }));
+            startSleepTick();
+            closeModal('sleep-modal');
+            notifyOnline('Minuteur de veille arme : la lecture s\'arretera dans ' + minutes + ' minutes.');
+        }
+
+        function armSleepEndOfTrack() {
+            cancelSleepTimer(true);
+            sleepTimer = { endsAt: 0, trackEnd: true, baseVolume: sleepBaseVolume(), tick: null };
+            updateSleepUI();
+            closeModal('sleep-modal');
+            notifyOnline('La lecture s\'arretera a la fin du titre en cours.');
+        }
+
+        function startSleepTick() {
+            if (!sleepTimer || sleepTimer.trackEnd) return;
+            updateSleepUI();
+            sleepTimer.tick = setInterval(sleepSecondTick, 1000);
+            sleepSecondTick();
+        }
+
+        function sleepSecondTick() {
+            if (!sleepTimer || sleepTimer.trackEnd) { stopSleepTick(); return; }
+            const remainingMs = sleepTimer.endsAt - Date.now();
+            if (remainingMs <= 0) { finishSleep(); return; }
+            updateSleepUI();
+            // Fondu progressif : le volume descend lineairement vers zero
+            if (remainingMs <= SLEEP_FADE_SECONDS * 1000) {
+                const ratio = remainingMs / (SLEEP_FADE_SECONDS * 1000);
+                audioPlayer.volume = sleepTimer.baseVolume * ratio;
+            }
+        }
+
+        function finishSleep() {
+            audioPlayer.pause();
+            notifyOnline('Minuteur de veille termine — bonne nuit.');
+            cancelSleepTimer(true);
+        }
+
+        function stopAtSleepEnd() {
+            if (!sleepTimer || !sleepTimer.trackEnd) return;
+            audioPlayer.pause();
+            audioPlayer.volume = sleepBaseVolume();
+            notifyOnline('Fin du titre : lecture arretee — bonne nuit.');
+            cancelSleepTimer(false);
+        }
+
+        function stopSleepTick() {
+            if (sleepTimer && sleepTimer.tick) { clearInterval(sleepTimer.tick); sleepTimer.tick = null; }
+        }
+
+        function cancelSleepTimer(restoreVolume) {
+            if (!sleepTimer) return;
+            stopSleepTick();
+            if (restoreVolume) audioPlayer.volume = sleepBaseVolume();
+            sleepTimer = null;
+            localStorage.removeItem(SLEEP_STORAGE_KEY);
+            updateSleepUI();
+        }
+
+        function updateSleepUI() {
+            const btn = document.getElementById('sleep-btn');
+            const label = document.getElementById('sleep-remaining');
+            const cancelOpt = document.getElementById('sleep-cancel-option');
+            const cancelRem = document.getElementById('sleep-cancel-remaining');
+            if (!btn || !label) return;
+            if (!sleepTimer) {
+                btn.classList.remove('armed');
+                label.classList.add('hidden');
+                if (cancelOpt) cancelOpt.classList.add('hidden');
+                return;
+            }
+            btn.classList.add('armed');
+            if (sleepTimer.trackEnd) {
+                label.textContent = 'fin du titre';
+            } else {
+                const s = Math.max(0, Math.ceil((sleepTimer.endsAt - Date.now()) / 1000));
+                label.textContent = Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
+            }
+            label.classList.remove('hidden');
+            if (cancelOpt) {
+                cancelOpt.classList.remove('hidden');
+                if (cancelRem) cancelRem.textContent = sleepTimer.trackEnd ? '' : label.textContent;
+            }
+        }
+
+        function openSleepModal() { updateSleepUI(); openModal('sleep-modal'); }
+
+        // Reprise apres un rechargement de page : le compte a rebours continue
+        function restoreSleepTimer() {
+            try {
+                const raw = localStorage.getItem(SLEEP_STORAGE_KEY);
+                if (!raw) return;
+                const saved = JSON.parse(raw);
+                if (saved && saved.endsAt && saved.endsAt > Date.now() + 1000) {
+                    sleepTimer = { endsAt: saved.endsAt, trackEnd: false, baseVolume: sleepBaseVolume(), tick: null };
+                    startSleepTick();
+                } else {
+                    localStorage.removeItem(SLEEP_STORAGE_KEY);
+                }
+            } catch (e) { /* donnee corrompue : ignoree */ }
+        }
+        restoreSleepTimer();
+
+        // =============================================================
+        // STATISTIQUES D'ECOUTE (jalon 4.3) : la fin d'un titre locale
+        // incremente son compteur cote serveur. La donnee reste locale.
+        // =============================================================
+        function recordListen(path) {
+            if (!path || path.indexOf('online:') === 0) return;   // titres locaux seulement
+            fetch('/api/play_count', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: path })
+            }).then(r => r.ok ? r.json() : null).then(d => {
+                if (!d || !d.success) return;
+                if (!state.play_counts) state.play_counts = {};
+                state.play_counts[d.path] = { plays: d.plays, last: Math.floor(Date.now() / 1000) };
+                if (currentView !== 'online') renderTracks();   // compteur visible sans attendre le sondage
+            }).catch(() => { /* statistique perdue : sans consequence */ });
         }
 
         // =============================================================
@@ -2135,12 +2668,15 @@
             queue.splice(idx, 1);
             if (idx < queueCurrentIndex) queueCurrentIndex--;
             else if (idx === queueCurrentIndex) queueCurrentIndex--;
+            if (queue.length === 0) radioMode = null;   // file videe a la main : la radio n'a plus de sens
             renderQueue();
         }
         function renderQueue() {
             const list = document.getElementById('queue-list');
             const count = document.getElementById('queue-count');
+            const radioStrip = document.getElementById('radio-strip');
             count.textContent = queue.length;
+            if (radioStrip) radioStrip.classList.toggle('hidden', !radioMode);
             list.innerHTML = '';
             if (queue.length === 0) {
                 list.innerHTML = '<div class="queue-empty"><i class="fas fa-music" style="font-size:2rem;margin-bottom:10px;display:block;"></i>La file est vide.<br>Ajoutez des morceaux avec <i class="fas fa-step-forward" style="margin:0 4px;"></i></div>';
@@ -2203,7 +2739,12 @@
         // =============================================================
         // EQUALIZER (Web Audio API)
         // =============================================================
-        let audioCtx, sourceNode, lowFilter, midFilter, highFilter;
+        let audioCtx, sourceNode, crossSourceNode, lowFilter, midFilter, highFilter, analyserNode;
+        // Seconde source audio (jalon 4.5) : porte le titre suivant pendant le
+        // fondu enchaine. Declaree ici pour que son noeud Web Audio soit cree
+        // en meme temps que celui du lecteur principal.
+        const crossPlayer = new Audio();
+        crossPlayer.preload = 'auto';
         function initEqualizer() {
             if (audioCtx) return;
             try {
@@ -2223,6 +2764,8 @@
                 highFilter.frequency.value = 4000;
                 highFilter.gain.value = 0;
                 sourceNode.connect(lowFilter);
+                crossSourceNode = audioCtx.createMediaElementSource(crossPlayer);
+                crossSourceNode.connect(lowFilter);   // le fondu profite aussi de l'egaliseur
                 lowFilter.connect(midFilter);
                 midFilter.connect(highFilter);
                 highFilter.connect(audioCtx.destination);
@@ -2242,6 +2785,365 @@
                 document.getElementById('eq-' + band).value = 0;
                 setEqGain(band, 0);
             });
+        }
+
+        // =============================================================
+        // VISUALISEUR SPECTRAL (jalon 4.5) : AnalyserNode greffe sur la
+        // chaine de l'egaliseur, fines barres dorées derriere les commandes.
+        // ACTIF PAR DEFAUT ; touche W ou le bouton onde pour le basculer.
+        // Le contexte audio n'est cree qu'au premier geste utilisateur
+        // (jamais de son coupe au demarrage), le dessin plafonne a ~30 fps.
+        // =============================================================
+        let vizActive = false;
+        // Absent du localStorage => active (nouvelle installation) ; '0' => coupe.
+        let vizWanted = localStorage.getItem('resonance-viz') !== '0';
+        let vizRafId = 0, vizLastTs = 0, vizGradient = null, vizGradW = 0;
+
+        function ensureAnalyser() {
+            initEqualizer();
+            if (audioCtx && !analyserNode) {
+                try {
+                    analyserNode = audioCtx.createAnalyser();
+                    analyserNode.fftSize = 256;               // 128 bandes
+                    analyserNode.smoothingTimeConstant = 0.8; // barres fluides
+                    highFilter.disconnect();                  // high -> analyseur -> sortie
+                    highFilter.connect(analyserNode);
+                    analyserNode.connect(audioCtx.destination);
+                } catch (e) { analyserNode = null; }
+            }
+            // Le contexte ne peut demarrer qu'apres un geste : ici on y est.
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+            return !!analyserNode;
+        }
+
+        function toggleVisualizer() {
+            vizWanted = !vizWanted;
+            localStorage.setItem('resonance-viz', vizWanted ? '1' : '0');
+            applyVisualizer();
+            notifyOnline(vizWanted ? 'Visualiseur spectral active.' : 'Visualiseur spectral desactive.');
+        }
+
+        function applyVisualizer() {
+            const canvas = document.getElementById('viz-canvas');
+            const btn = document.getElementById('viz-btn');
+            if (btn) btn.classList.toggle('active', vizWanted);
+            if (!canvas) return;
+            if (!vizWanted) {
+                vizActive = false;
+                canvas.classList.add('hidden');
+                if (vizRafId) { cancelAnimationFrame(vizRafId); vizRafId = 0; }
+                const c2d = canvas.getContext('2d');
+                if (c2d) c2d.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+            // Un AudioContext ne nait que d'un geste utilisateur (politique des
+            // navigateurs) : le clic sur le bouton en est un.
+            if (!ensureAnalyser()) {
+                vizWanted = false;
+                notifyOnline('Web Audio indisponible sur ce navigateur : visualiseur impossible.', true);
+                return;
+            }
+            canvas.classList.remove('hidden');
+            vizActive = true;
+            if (!vizRafId) vizRafId = requestAnimationFrame(vizFrame);
+        }
+
+        function vizFrame(ts) {
+            if (!vizActive) { vizRafId = 0; return; }
+            vizRafId = requestAnimationFrame(vizFrame);
+            if (ts - vizLastTs < 33) return;   // ~30 fps : menage les batteries
+            vizLastTs = ts;
+            drawViz();
+        }
+
+        function drawViz() {
+            const canvas = document.getElementById('viz-canvas');
+            if (!canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+            const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+            if (canvas.width !== w || canvas.height !== h) {
+                canvas.width = w; canvas.height = h; vizGradient = null;
+            }
+            const c2d = canvas.getContext('2d');
+            c2d.clearRect(0, 0, w, h);
+            if (!analyserNode) return;
+            const playing = (!audioPlayer.paused && audioPlayer.src) || (!crossPlayer.paused && crossPlayer.src);
+            if (!playing) return;   // silence : on laisse la barre nette
+            const data = new Uint8Array(analyserNode.frequencyBinCount);
+            analyserNode.getByteFrequencyData(data);
+            if (!vizGradient || vizGradW !== w) {
+                vizGradient = c2d.createLinearGradient(0, h, 0, 0);
+                vizGradient.addColorStop(0, 'rgba(201, 162, 39, 0.05)');
+                vizGradient.addColorStop(0.75, 'rgba(212, 175, 55, 0.55)');
+                vizGradient.addColorStop(1, 'rgba(240, 220, 150, 0.9)');
+                vizGradW = w;
+            }
+            const bars = 56, count = data.length;
+            const slot = w / bars, bw = Math.max(1, slot * 0.5);
+            c2d.fillStyle = vizGradient;
+            for (let i = 0; i < bars; i++) {
+                // repartition quadratique : plus de resolution dans les graves
+                const idx = Math.min(count - 1, Math.round(Math.pow((i + 1) / bars, 2) * count));
+                const v = data[idx] / 255;
+                const bh = Math.max(2 * dpr, v * v * h * 0.95);
+                c2d.fillRect(i * slot + (slot - bw) / 2, h - bh, bw, bh);
+            }
+        }
+
+        // Preference conservee mais le contexte audio ne sera cree qu'au
+        // premier geste (clic) de la session : jamais de son coupe au demarrage.
+        if (vizWanted) {
+            const vizArm = () => {
+                document.removeEventListener('pointerdown', vizArm);
+                applyVisualizer();
+            };
+            document.addEventListener('pointerdown', vizArm);
+        }
+
+        // =============================================================
+        // FONDU ENCHAINE (jalon 4.5) : les dernieres secondes du titre
+        // courant s'effacent pendant que le suivant monte dans crossPlayer,
+        // puis le lecteur principal prend le relais exactement a la position
+        // pre-chargee. Toute la logique existante (file, paroles, pochette,
+        // statistiques, ecran verrouille) continue de fonctionner.
+        // =============================================================
+        const CROSS_STEPS = [0, 2, 4, 6];   // off -> 2 s -> 4 s -> 6 s -> off
+        let crossSecs = parseInt(localStorage.getItem('resonance-crossfade') || '0', 10);
+        if (CROSS_STEPS.indexOf(crossSecs) === -1) crossSecs = 0;
+        let crossfading = false, crossNextItem = null, crossRafId = 0, crossStartTs = 0, crossBaseVol = 1;
+
+        function toggleCrossfade() {
+            const i = CROSS_STEPS.indexOf(crossSecs);
+            crossSecs = CROSS_STEPS[(i + 1) % CROSS_STEPS.length];
+            localStorage.setItem('resonance-crossfade', String(crossSecs));
+            updateCrossfadeUI();
+            notifyOnline(crossSecs === 0
+                ? 'Fondu enchaine desactive.'
+                : 'Fondu enchaine : ' + crossSecs + ' s de croisement entre les titres.');
+        }
+        // Le bouton a laisse place au raccourci B ; l'etat est rappele dans
+        // l'infobulle de l'aide-memoire et a chaque bascule par notification.
+
+        function updateCrossfadeUI() {
+            // Ancien bouton retire : l'etat du fondu vit desormais dans le
+            // raccourci B et les notifications. La fonction reste un point
+            // d'accroche si un indicateur visuel revient plus tard.
+        }
+
+        function currentVolume() {
+            const v = parseFloat(document.getElementById('volume-slider').value);
+            return isNaN(v) ? 1 : v;
+        }
+
+        // Reflet sans lecture de playNext() : quel titre viendra ensuite ?
+        function peekNextTrack() {
+            if (queue.length > 0) {
+                if (queueCurrentIndex + 1 < queue.length) return queue[queueCurrentIndex + 1];
+                return null;   // fin de file : la radio/la suite s'en occupe a la fin
+            }
+            if (currentPlayingPath && currentPlayingPath.indexOf('online:') === 0 && onlineResults.length > 0) {
+                let idx = onlineResults.findIndex(x => x.id === currentOnlineId);
+                idx = (idx === -1 || idx + 1 >= onlineResults.length) ? 0 : idx + 1;
+                if (isShuffle) idx = Math.floor(Math.random() * onlineResults.length);
+                const r = onlineResults[idx];
+                if (!r) return null;
+                return { online: true, id: r.id, path: 'online:' + r.id, title: r.title,
+                         artist: r.artist, artwork: r.artwork,
+                         _src: r._src || r.source, views: r.views };
+            }
+            if (displayedSongs.length === 0) return null;
+            if (isShuffle) return displayedSongs[Math.floor(Math.random() * displayedSongs.length)];
+            const idx = displayedSongs.findIndex(s => s.path === currentPlayingPath);
+            if (idx === -1) return null;
+            return (idx + 1 < displayedSongs.length) ? displayedSongs[idx + 1] : displayedSongs[0];
+        }
+
+        function trackUrl(item) {
+            if (item.online) {
+                const base = (item._src === 'youtube') ? '/api/stream_youtube/' : '/api/stream_online/';
+                return base + encodeURIComponent(item.id);
+            }
+            return '/stream/' + encodeURIComponent(item.path);
+        }
+
+        function maybeStartCrossfade() {
+            if (crossSecs <= 0 || crossfading) return;
+            if (audioPlayer.paused || audioPlayer.loop || !audioPlayer.duration || !isFinite(audioPlayer.duration)) return;
+            // Veille reglee sur la fin du titre : on laisse finir proprement.
+            if (sleepTimer && sleepTimer.trackEnd) return;
+            if (audioPlayer.currentTime < audioPlayer.duration - crossSecs) return;
+            const next = peekNextTrack();
+            if (!next) return;
+            crossfading = true;
+            crossNextItem = next;
+            crossBaseVol = currentVolume();
+            crossPlayer.src = trackUrl(next);
+            crossPlayer.volume = 0;
+            crossPlayer.play().catch(() => { cancelCrossfade(); });   // flux refuse : arret propre, le mode classique prendra le relais
+            crossStartTs = performance.now();
+            cancelAnimationFrame(crossRafId);
+            crossRafId = requestAnimationFrame(crossFadeFrame);
+        }
+
+        function crossFadeFrame() {
+            if (!crossfading) { crossRafId = 0; return; }
+            const t = Math.min(1, (performance.now() - crossStartTs) / (crossSecs * 1000));
+            audioPlayer.volume = crossBaseVol * (1 - t);
+            crossPlayer.volume = crossBaseVol * t;
+            if (t >= 1) { crossRafId = 0; completeCrossfade(); return; }
+            crossRafId = requestAnimationFrame(crossFadeFrame);
+        }
+
+        function completeCrossfade() {
+            if (!crossfading) return;
+            const next = crossNextItem;
+            crossfading = false;
+            crossNextItem = null;
+            // Le titre courant est termine par le fondu : statististiques (4.3)
+            recordListen(currentPlayingPath);
+            try { audioPlayer.pause(); } catch (e) { /* deja arrete */ }
+            const resumeAt = crossPlayer.currentTime || 0;
+            // Avancer la file exactement comme playNext l'aurait fait
+            if (queue.length > 0 && queue[queueCurrentIndex + 1] === next) queueCurrentIndex++;
+            if (next.online) playOnlineTrack(next, null);
+            else playSong(next.path, next.title, next.artist);
+            // Reprise a la position pre-chargee, puis extinction de la seconde source
+            const align = () => {
+                if (resumeAt > 0.3 && audioPlayer.duration && isFinite(audioPlayer.duration)) {
+                    try { audioPlayer.currentTime = Math.min(resumeAt, audioPlayer.duration - 0.5); } catch (e) { /* seek refuse */ }
+                }
+            };
+            if (audioPlayer.readyState >= 1) align();
+            else audioPlayer.addEventListener('loadedmetadata', align, { once: true });
+            audioPlayer.volume = crossBaseVol;
+            fadeOutCrossPlayer(500);
+        }
+
+        function fadeOutCrossPlayer(ms) {
+            if (!crossPlayer.src || crossPlayer.paused) return;
+            const from = crossPlayer.volume, t0 = performance.now();
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / ms);
+                crossPlayer.volume = from * (1 - t);
+                if (t < 1) { requestAnimationFrame(step); return; }
+                crossPlayer.pause();
+                crossPlayer.removeAttribute('src');
+                try { crossPlayer.load(); } catch (e) { /* rien */ }
+                crossPlayer.volume = 1;
+            };
+            requestAnimationFrame(step);
+        }
+
+        function cancelCrossfade() {
+            if (!crossfading) return;
+            crossfading = false;
+            crossNextItem = null;
+            if (crossRafId) { cancelAnimationFrame(crossRafId); crossRafId = 0; }
+            fadeOutCrossPlayer(250);
+            audioPlayer.volume = currentVolume();
+        }
+
+        // =============================================================
+        // RADIO AUTOMATIQUE (jalon 4.4) : depuis un titre, construit une
+        // file de continuation — meme artiste, puis meme album en local,
+        // puis recherche en ligne des titres comparables quand le local
+        // s'epuise. La file reste reordonnable et visible dans le panneau.
+        // =============================================================
+        let radioMode = null;   // {artist, seed} : null = radio eteinte
+
+        function shuffled(arr) {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+        }
+
+        function startRadioFromSong(song) {
+            const seed = { path: song.path, title: song.title, artist: song.artist };
+            const sameArtist = shuffled(state.songs.filter(s =>
+                s.path !== song.path && s.artist === song.artist)).slice(0, 25);
+            const inRadio = new Set([song.path, ...sameArtist.map(s => s.path)]);
+            const sameAlbum = song.album && song.album !== 'Album inconnu'
+                ? shuffled(state.songs.filter(s =>
+                    !inRadio.has(s.path) && s.album === song.album)).slice(0, 25)
+                : [];
+            queue.length = 0;
+            queue.push(seed, ...sameArtist, ...sameAlbum);
+            queueCurrentIndex = 0;
+            radioMode = { artist: song.artist, seed: song.path };
+            renderQueue();
+            playQueueItem(seed);
+            const locaux = queue.length - 1;
+            if (locaux === 0) radioFetchOnline();   // rien en local : continuation immediate
+            notifyOnline('Radio lancee depuis « ' + song.title + ' »' +
+                (locaux > 0 ? ' — ' + locaux + ' titre' + (locaux > 1 ? 's' : '') + ' local' + (locaux > 1 ? 'aux' : '') + ' en file.' : '.'));
+        }
+
+        async function startRadioFromOnline(r) {
+            const seed = { online: true, id: r.id, path: 'online:' + r.id, title: r.title,
+                           artist: r.artist, artwork: r.artwork, _src: r._src || r.source, views: r.views };
+            queue.length = 0;
+            queue.push(seed);
+            queueCurrentIndex = 0;
+            radioMode = { artist: r.artist, seed: 'online:' + r.id };
+            renderQueue();
+            playOnlineTrack(seed, 0);
+            notifyOnline('Radio en ligne lancee depuis « ' + r.title + ' ».');
+            radioFetchOnline();
+        }
+
+        // La source locale s'epuise : complete par une recherche en ligne.
+        async function radioFetchOnline() {
+            if (!radioMode) return;
+            if (netStatus.online === false) {
+                notifyOnline('Radio : plus de titres locaux et pas de connexion internet.', true);
+                radioMode = null;
+                return;
+            }
+            const artist = radioMode.artist;
+            const isYt = onlineSource === 'youtube';
+            try {
+                const url = isYt ? '/api/search_youtube?q=' : '/api/search_online?q=';
+                const res = await fetch(url + encodeURIComponent(artist));
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                const results = data.results || [];
+                const known = new Set(queue.map(s => s.id));
+                const picks = [];
+                for (const r of results) {
+                    if (picks.length >= 12) break;
+                    if (!r.id || known.has(r.id) || r.id === (radioMode.seed || '').replace('online:', '')) continue;
+                    picks.push({ online: true, id: r.id, path: 'online:' + r.id, title: r.title,
+                                 artist: r.artist, artwork: r.artwork,
+                                 _src: r._src || r.source || (isYt ? 'youtube' : 'audius'), views: r.views });
+                }
+                if (picks.length === 0) {
+                    radioMode = null;
+                    notifyOnline('Radio : plus rien a ajouter pour « ' + artist + ' ». La file s\'arrete a la fin.', true);
+                    return;
+                }
+                queue.push(...picks);
+                renderQueue();
+                notifyOnline('Radio : ' + picks.length + ' titre' + (picks.length > 1 ? 's' : '') + ' en ligne ajoute' + (picks.length > 1 ? 's' : '') + ' a la file.');
+                // si la lecture s'etait arretee en fin de file, elle repart
+                if (audioPlayer.paused && queueCurrentIndex + 1 < queue.length) {
+                    queueCurrentIndex++;
+                    playQueueItem(queue[queueCurrentIndex]);
+                }
+            } catch (e) {
+                radioMode = null;
+                notifyOnline('Radio : recherche en ligne impossible (' + (e.message || 'reseau') + ').', true);
+            }
+        }
+
+        function stopRadio() {
+            if (!radioMode) return;
+            radioMode = null;
+            renderQueue();
+            notifyOnline('Radio eteinte : la file d\'attente reste jouable.');
         }
 
         // =============================================================
@@ -2375,23 +3277,45 @@
                     playPrev();
                     showKbHint('<kbd>←</kbd> Piste precedente');
                     break;
-                case 'KeyM':
+            }
+            // Lettres : e.key suit la LETTRE IMPRIMEE sur le clavier (AZERTY
+            // inclus), contrairement a e.code qui encode la position physique
+            // QWERTY — sur AZERTY, la touche W imprimee est sur la position
+            // QWERTY "Z" (e.code KeyZ), et la touche M imprimee est ailleurs.
+            const kbKey = (typeof e.key === 'string' ? e.key : '').toLowerCase();
+            switch(kbKey) {
+                case 'm':
                     audioPlayer.muted = !audioPlayer.muted;
                     showKbHint('<kbd>M</kbd> ' + (audioPlayer.muted ? 'Son coupe' : 'Son active'));
                     break;
-                case 'KeyF':
+                case 'f':
                     if (currentPlayingPath) {
                         toggleFavorite(currentPlayingPath);
                         showKbHint('<kbd>F</kbd> Favori toggle');
                     }
                     break;
-                case 'KeyL':
+                case 'l':
                     toggleLyricsPanel();
                     showKbHint('<kbd>L</kbd> Paroles');
                     break;
-                case 'KeyC':
+                case 'c':
                     toggleClipModal();
                     showKbHint('<kbd>C</kbd> Clip');
+                    break;
+                case 'v':
+                    openSleepModal();
+                    showKbHint('<kbd>V</kbd> Minuteur de veille');
+                    break;
+                case 'b':
+                    toggleCrossfade();
+                    showKbHint('<kbd>B</kbd> Fondu enchaine : ' +
+                        (crossSecs === 0 ? 'desactive' : crossSecs + ' s'));
+                    break;
+                case 'w':
+                case 'z':   // AZERTY : la lettre Z imprimee est a la position QWERTY du W — les deux marches
+                    toggleVisualizer();
+                    showKbHint('<kbd>' + kbKey.toUpperCase() + '</kbd> Visualiseur spectral ' +
+                        (vizWanted ? 'active' : 'desactive'));
                     break;
             }
         });
@@ -2875,6 +3799,8 @@
         // LAUNCH
         // =============================================================
         initTheme();
+        updateCrossfadeUI();   // etat du bouton fondu enchaine (jalon 4.5)
+        readDlQuality();       // qualite de telechargement memorisee (jalon 4.6)
         fetchData(true).then(rearmPins);
         setInterval(() => fetchData(false), 5000);
 
@@ -2957,18 +3883,27 @@
 
         async function runOnlineSearch(q) {
             if (currentView !== 'online') return;
+            // Lien de playlist YouTube colle (jalon 4.6) : import a cocher
+            // plutot que recherche simple.
+            if (onlineSource === 'youtube' && isPlaylistUrl(q)) {
+                openPlaylistImport(q);
+                return;
+            }
             const myId = ++onlineReqId;
             onlineQuery = q;
             onlineSearched = true;
+            onlineFetched = ONLINE_PAGE;
+            onlineHasMore = true;
             const isYt = onlineSource === 'youtube';
             onlineLoading('Recherche de « ' + q + ' » sur ' + (isYt ? 'YouTube' : 'Audius') + '...');
             try {
                 const url = isYt ? '/api/search_youtube?q=' : '/api/search_online?q=';
-                const res = await fetch(url + encodeURIComponent(q));
+                const res = await fetch(url + encodeURIComponent(q) + '&offset=0');
                 const data = await res.json();
                 if (myId !== onlineReqId || currentView !== 'online') return;
                 if (data.error) throw new Error(data.error);
                 onlineResults = data.results || [];
+                onlineHasMore = onlineResults.length >= ONLINE_PAGE;
                 if (!onlineResults.length) {
                     trackList.innerHTML =
                         '<div class="online-loading"><i class="fas fa-face-frown"></i>Aucun resultat pour « ' +
@@ -2987,30 +3922,102 @@
             const myId = ++onlineReqId;
             onlineQuery = "";
             onlineSearched = false;
+            onlineFetched = ONLINE_PAGE;
+            onlineHasMore = true;
             try {
                 let data;
                 if (onlineSource === 'youtube') {
                     onlineLoading('Chargement des tendances YouTube...');
-                    const res = await fetch('/api/search_youtube?q=' + encodeURIComponent(YT_DEFAULT_QUERY));
+                    const res = await fetch('/api/search_youtube?q=' + encodeURIComponent(YT_DEFAULT_QUERY) + '&offset=0');
                     data = await res.json();
                 } else {
                     onlineLoading('Chargement des tendances Audius...');
-                    const res = await fetch('/api/trending_online');
+                    const res = await fetch('/api/trending_online?offset=0');
                     data = await res.json();
                 }
                 if (myId !== onlineReqId || currentView !== 'online') return;
                 if (data.error) throw new Error(data.error);
                 onlineResults = data.results || [];
+                onlineHasMore = onlineResults.length >= ONLINE_PAGE;
                 renderOnlineResults();
             } catch (e) {
                 if (myId !== onlineReqId || currentView !== 'online') return;
                 if (netStatus.online === false) {
-                    onlineError('Pas de connexion internet. La pastille en haut a droite passera au vert quand ce sera revenu.');
+                    onlineError('Pas de connexion internet. La ligne de vie sous le titre passera au flatline ; elle rebattra quand ce sera revenu. La lecture locale reste disponible.');
                 } else {
                     onlineError(e.message || 'Source en ligne injoignable');
                 }
             }
         }
+
+        // =============================================================
+        // SCROLL INFINI (liste en ligne) : une nouvelle page de resultats
+        // se charge quand on approche du bas, avec dedoublonnage et fin
+        // propre quand la source n'a plus rien.
+        // =============================================================
+        const ONLINE_PAGE = 40;
+        let onlineFetched = 0;      // resultats deja demandes au serveur
+        let onlineHasMore = false;  // la source a encore quelque chose a donner
+        let onlinePageLoading = false;
+
+        async function loadMoreOnline() {
+            if (currentView !== 'online' || !onlineHasMore || onlinePageLoading) return;
+            if (netStatus.online === false) return;
+            onlinePageLoading = true;
+            showOnlineLoader(true);
+            const isYt = onlineSource === 'youtube';
+            const myId = onlineReqId;
+            try {
+                let url;
+                if (onlineSearched) {
+                    url = (isYt ? '/api/search_youtube?q=' : '/api/search_online?q=') +
+                        encodeURIComponent(onlineQuery) + '&offset=' + onlineFetched;
+                } else if (isYt) {
+                    url = '/api/search_youtube?q=' + encodeURIComponent(YT_DEFAULT_QUERY) + '&offset=' + onlineFetched;
+                } else {
+                    url = '/api/trending_online?offset=' + onlineFetched;
+                }
+                const res = await fetch(url);
+                const data = await res.json();
+                if (myId !== onlineReqId || currentView !== 'online') return;
+                if (data.error) throw new Error(data.error);
+                const got = (data.results || []).length;
+                const known = new Set(onlineResults.map(r => r.id));
+                const fresh = (data.results || []).filter(r => r.id && !known.has(r.id));
+                onlineFetched += ONLINE_PAGE;
+                onlineResults.push(...fresh);
+                onlineHasMore = got >= ONLINE_PAGE && fresh.length > 0;
+                renderOnlineResults();
+            } catch (e) {
+                // Fin de source ou reseau fatigue : on arrete de demander.
+                onlineHasMore = false;
+                showOnlineLoader(false);
+            } finally {
+                onlinePageLoading = false;
+                showOnlineLoader(false);
+            }
+        }
+
+        function showOnlineLoader(on) {
+            const old = document.getElementById('online-page-loader');
+            if (old) old.remove();
+            if (on && currentView === 'online') {
+                const el = document.createElement('div');
+                el.className = 'online-loading';
+                el.id = 'online-page-loader';
+                el.style.padding = '24px 20px';
+                el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Suite des resultats...';
+                trackList.appendChild(el);
+            }
+        }
+
+        // Approche du bas de la liste -> page suivante
+        trackList.addEventListener('scroll', () => {
+            if (currentView !== 'online' || !onlineHasMore || onlinePageLoading) return;
+            if (trackList.scrollTop + trackList.clientHeight >= trackList.scrollHeight - 450) {
+                loadMoreOnline();
+            }
+        }, { passive: true });
 
         function renderOnlineResults() {
             trackList.innerHTML = '';
@@ -3048,6 +4055,7 @@
                     '</div>' +
                     '<span class="online-badge">' + (r._src === 'youtube' ? 'YouTube' : 'En ligne') + '</span>' +
                     '<div class="song-actions">' +
+                        '<button class="action-btn radio-btn" title="Radio : suite continue depuis ce titre"><i class="fas fa-tower-broadcast"></i></button>' +
                         '<button class="action-btn nq-btn" title="Ecouter ensuite"><i class="fas fa-step-forward"></i></button>' +
                         '<button class="action-btn dl-btn" title="Telecharger dans votre dossier de musique"><i class="fas fa-download"></i></button>' +
                     '</div>';
@@ -3055,6 +4063,10 @@
                 const play = () => playOnlineTrack(r);
                 row.querySelector('.song-play-btn').addEventListener('click', play);
                 row.querySelector('.song-info').addEventListener('click', play);
+                row.querySelector('.radio-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    startRadioFromOnline(r);
+                });
                 row.querySelector('.nq-btn').addEventListener('click', (e) => {
                     e.stopPropagation();
                     addToQueue({ online: true, id: r.id, path: 'online:' + r.id,
@@ -3064,10 +4076,14 @@
                 row.querySelector('.dl-btn').addEventListener('click', () => downloadOnlineTrack(r));
                 trackList.appendChild(row);
             });
+            // Pagination en cours : on remet l'indicateur de suite (renderOnlineResults
+            // repart d'une liste vide a chaque page).
+            if (onlinePageLoading) showOnlineLoader(true);
         }
 
         async function playOnlineTrack(r, qIdx = null) {
             if (currentPlayingPath === 'online:' + r.id) { togglePlayPause(); return; }
+            cancelCrossfade();   // changement manuel de titre : le fondu en cours s'annule
             const streamBase = r._src === 'youtube' ? '/api/stream_youtube/' : '/api/stream_online/';
             const src = streamBase + encodeURIComponent(r.id);
 
@@ -3127,6 +4143,7 @@
             const row = document.getElementById('online-row-' + r.id);
             if (row) row.classList.add('playing');
             if (lyricsVisible) fetchLyrics(r.title);   // artiste/id deja dans currentPlayingArtist/currentOnlineId
+            updateMediaSessionForOnline(r);
             updatePlayBtnUI();
         }
 
@@ -3140,7 +4157,7 @@
 
         function toggleDlPanel(forceOpen = false) {
             const panel = document.getElementById('dl-panel');
-            const btn = document.getElementById('dl-toggle');
+            const btn = document.getElementById('header-menu-btn');
             if (!panel) return;
             const show = forceOpen || panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !show);
@@ -3148,10 +4165,15 @@
         }
 
         function updateDlBadge() {
-            const badge = document.getElementById('dl-badge');
-            if (!badge) return;
-            badge.textContent = dlActiveIds.size;
-            badge.classList.toggle('hidden', dlActiveIds.size === 0);
+            // Le badge de telechargements vit desormais sur le bouton du menu
+            // d'entete (et sur la ligne du menu) : toujours visible pendant
+            // une file de travaux.
+            for (const id of ['dl-badge', 'dl-badge-menu']) {
+                const badge = document.getElementById(id);
+                if (!badge) continue;
+                badge.textContent = dlActiveIds.size;
+                badge.classList.toggle('hidden', dlActiveIds.size === 0);
+            }
         }
 
         // Notification en haut a droite : tant qu'elle est visible, le panneau
@@ -3323,10 +4345,12 @@
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             try {
                 const endpoint = r._src === 'youtube' ? '/api/download_youtube' : '/api/download_online';
+                const body = { id: r.id, title: r.title, artist: r.artist, artwork: r.artwork, replace_of: replaceOf };
+                if (r._src === 'youtube') body.quality = readDlQuality();   // jalon 4.6
                 const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: r.id, title: r.title, artist: r.artist, artwork: r.artwork, replace_of: replaceOf })
+                    body: JSON.stringify(body)
                 });
                 const data = await res.json();
                 if (data.success && data.job_id) {
@@ -3349,6 +4373,191 @@
         }
 
         // =============================================================
+        // QUALITE DE TELECHARGEMENT (jalon 4.6) : 128/192/320 kbit/s pour
+        // les conversions YouTube — economie de place ou fidelite.
+        // =============================================================
+        function saveDlQuality() {
+            localStorage.setItem('resonance-dl-quality', document.getElementById('dl-quality').value);
+        }
+        function readDlQuality() {
+            const sel = document.getElementById('dl-quality');
+            if (!sel) return '192';
+            const saved = localStorage.getItem('resonance-dl-quality');
+            if (saved && ['128', '192', '320'].includes(saved)) sel.value = saved;
+            return sel.value;
+        }
+
+        // =============================================================
+        // IMPORT DE PLAYLIST YOUTUBE (jalon 4.6) : un lien contenant
+        // list= ouvre une liste a cocher ; chaque titre coche devient une
+        // tache d'arriere-plan (la file de travaux suit l'ordre coche).
+        // =============================================================
+        let playlistImportItems = [];
+
+        function isPlaylistUrl(q) {
+            return /^https?:\/\//i.test(q) && /[?&]list=[A-Za-z0-9_-]+/i.test(q);
+        }
+
+        async function openPlaylistImport(url) {
+            if (currentView !== 'online') changeView('online', 'Explorer en ligne');
+            const list = document.getElementById('playlist-import-list');
+            const titleEl = document.getElementById('playlist-modal-title');
+            const countEl = document.getElementById('playlist-count');
+            const importBtn = document.getElementById('playlist-import-btn');
+            titleEl.textContent = 'Chargement de la playlist...';
+            list.innerHTML = '<div class="online-loading" style="padding:20px 0;"><i class="fas fa-spinner fa-spin"></i> Lecture de la playlist YouTube...</div>';
+            countEl.textContent = '';
+            importBtn.disabled = true;
+            openModal('playlist-modal');
+            try {
+                const res = await fetch('/api/playlist_youtube?url=' + encodeURIComponent(url));
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                playlistImportItems = data.items || [];
+                titleEl.textContent = data.title ? 'Importer : ' + data.title : 'Importer la playlist';
+                renderPlaylistImportList();
+                importBtn.disabled = playlistImportItems.length === 0;
+            } catch (e) {
+                list.innerHTML = '<div class="online-loading" style="color:var(--danger);padding:20px 0;">' +
+                    '<i class="fas fa-triangle-exclamation"></i> ' + escapeHtml(e.message || 'Playlist illisible') + '</div>';
+                titleEl.textContent = 'Importer une playlist YouTube';
+                importBtn.disabled = true;
+            }
+        }
+
+        function renderPlaylistImportList() {
+            const list = document.getElementById('playlist-import-list');
+            const countEl = document.getElementById('playlist-count');
+            const checkAll = document.getElementById('playlist-checkall');
+            list.innerHTML = '';
+            let existingCount = 0;
+            playlistImportItems.forEach(item => {
+                const already = !!findExistingDownload(item.title, item.artist);
+                if (already) existingCount++;
+                item.checked = !already;   // les titres deja presents sont decoches
+                const row = document.createElement('label');
+                row.className = 'playlist-item' + (already ? ' already' : '');
+                row.innerHTML =
+                    '<input type="checkbox" ' + (item.checked ? 'checked' : '') + (already ? ' disabled' : '') + '>' +
+                    (item.artwork ? '<img src="' + escapeHtml(item.artwork) + '" alt="" loading="lazy">' : '') +
+                    '<span class="pl-title">' + escapeHtml(item.title) +
+                        '<div class="pl-sub">' + escapeHtml(item.artist) + (item.duration ? ' · ' + formatOnlineDuration(item.duration) : '') + '</div>' +
+                    '</span>' +
+                    (already ? '<span class="pl-badge">deja present</span>' : '');
+                const cb = row.querySelector('input');
+                cb.addEventListener('change', () => {
+                    item.checked = cb.checked;
+                    updatePlaylistCount();
+                });
+                list.appendChild(row);
+            });
+            checkAll.checked = existingCount < playlistImportItems.length;
+            updatePlaylistCount();
+        }
+
+        function updatePlaylistCount() {
+            const countEl = document.getElementById('playlist-count');
+            const selected = playlistImportItems.filter(i => i.checked).length;
+            countEl.textContent = playlistImportItems.length
+                ? selected + ' / ' + playlistImportItems.length + ' coches' : '';
+        }
+
+        function playlistToggleAll() {
+            const on = document.getElementById('playlist-checkall').checked;
+            document.querySelectorAll('#playlist-import-list input[type="checkbox"]').forEach((cb, i) => {
+                if (!cb.disabled) {
+                    cb.checked = on;
+                    if (playlistImportItems[i]) playlistImportItems[i].checked = on;
+                }
+            });
+            updatePlaylistCount();
+        }
+
+        async function importPlaylistSelection() {
+            const picks = playlistImportItems.filter(i => i.checked);
+            if (picks.length === 0) { notifyOnline('Aucun titre coche.', true); return; }
+            const quality = readDlQuality();
+            const importBtn = document.getElementById('playlist-import-btn');
+            importBtn.disabled = true;
+            importBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lancement...';
+            let launched = 0, failed = 0;
+            for (const item of picks) {
+                try {
+                    const res = await fetch('/api/download_youtube', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: item.id, title: item.title, artist: item.artist, artwork: item.artwork, quality: quality })
+                    });
+                    const data = await res.json();
+                    if (data.success) launched++;
+                    else failed++;
+                } catch (e) { failed++; }
+            }
+            importBtn.innerHTML = '<i class="fas fa-download"></i> Telecharger la selection';
+            importBtn.disabled = false;
+            closeModal('playlist-modal');
+            toggleDlPanel(true);
+            notifyOnline(launched + ' telechargement' + (launched > 1 ? 's' : '') + ' mis en file d\'attente' +
+                (failed ? ' (' + failed + ' refus' + (failed > 1 ? 's' : '') + ')' : '') + ' — qualite ' + quality + ' kbit/s.');
+        }
+
+        // =============================================================
+        // SAUVEGARDE / RESTAURATION (jalon 4.7) : favoris, playlists et
+        // statistiques en JSON, sans toucher au dossier de musique.
+        // =============================================================
+        function openBackupModal() {
+            const songs = state.songs || [];
+            const favs = (state.favorites || []).length;
+            const pls = Object.keys(state.playlists || {}).length;
+            const summary = document.getElementById('backup-summary');
+            if (summary) summary.textContent = favs + ' favoris · ' + pls + ' playlists';
+            openModal('backup-modal');
+        }
+
+        async function exportBackup() {
+            try {
+                const res = await fetch('/api/backup');
+                if (!res.ok) throw new Error('Export impossible');
+                const data = await res.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const d = new Date();
+                const pad = n => (n < 10 ? '0' : '') + n;
+                const name = 'resonance-sauvegarde-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '.json';
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = name;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+                notifyOnline('Sauvegarde exportee : ' + name);
+            } catch (e) {
+                notifyOnline('Export impossible (' + (e.message || 'reseau') + ').', true);
+            }
+        }
+
+        async function importBackupFile(input) {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const res = await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: text
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Fichier invalide');
+                closeModal('backup-modal');
+                await fetchData(true);
+                notifyOnline('Donnees restaurees : ' + data.favorites + ' favoris, ' +
+                    data.playlists + ' playlists, ' + data.play_counts + ' compteurs.');
+            } catch (e) {
+                notifyOnline('Import impossible : ' + (e.message || 'fichier illisible'), true);
+            } finally {
+                input.value = '';
+            }
+        }
+
+        // =============================================================
         // BIBLIOTHEQUE : actualiser + dossier surveille
         // =============================================================
         async function refreshLibrary() {
@@ -3366,11 +4575,28 @@
             }
         }
 
-        function showLibraryDir() {
-            const dir = state.music_dir || '(inconnu — /api/state indisponible)';
-            const count = state.songs ? state.songs.length : 0;
-            notifyOnline('Dossier surveille : ' + dir + ' — ' + count + ' titre' + (count > 1 ? 's' : '') + '.');
+        // =============================================================
+        // MENU D'ENTETE (telechargements / stockage / sauvegarde)
+        // =============================================================
+        function toggleHeaderMenu(event) {
+            if (event) event.stopPropagation();
+            document.getElementById('header-menu').classList.toggle('hidden');
         }
+        function closeHeaderMenu() {
+            document.getElementById('header-menu').classList.add('hidden');
+        }
+        function menuRun(fn) {
+            closeHeaderMenu();
+            fn();
+        }
+        function menuOpenDl() {
+            closeHeaderMenu();
+            toggleDlPanel(true);
+        }
+        document.addEventListener('click', (e) => {
+            const wrap = document.getElementById('header-menu-wrap');
+            if (wrap && !wrap.contains(e.target)) closeHeaderMenu();
+        });
 
         // =============================================================
         // STOCKAGE HORS LIGNE (cache media du service worker)
@@ -3417,30 +4643,110 @@
                 youtube_ok: !!data.youtube_ok,
                 server: serverOk === undefined ? netStatus.server : !!serverOk
             };
-            const pill = document.getElementById('net-status');
-            const label = document.getElementById('net-label');
-            if (!pill || !label) return;
-            pill.classList.remove('net-online', 'net-limited', 'net-offline');
-            if (netStatus.online === true && (netStatus.audius_ok || netStatus.youtube_ok)) {
-                pill.classList.add('net-online');
-                label.textContent = 'En ligne';
-            } else if (netStatus.online === true) {
-                pill.classList.add('net-limited');
-                label.textContent = 'Reseau limite';
-            } else if (netStatus.online === null) {
-                // Etat inconnu (sonde en cours) : neutre, surtout PAS "hors
-                // ligne" — la lecture locale n'attend jamais cette sonde.
-                pill.classList.add('net-limited');
-                label.textContent = '…';
-            } else {
-                pill.classList.add('net-offline');
-                label.textContent = netStatus.server === false ? 'Serveur injoignable' : 'Hors ligne';
+            // La resonance lit netStatus a chaque image ; on met seulement a jour
+            // son infobulle (l'ancien badge a ete remplace par ces ondes).
+            const pulse = document.getElementById('server-pulse');
+            if (pulse) {
+                if (netStatus.online === true && (netStatus.audius_ok || netStatus.youtube_ok)) {
+                    pulse.title = 'Resonance du serveur : ondes regulieres, Internet OK';
+                } else if (netStatus.online === true) {
+                    pulse.title = 'Resonance du serveur : ondes irregulieres, catalogue en ligne limite';
+                } else if (netStatus.online === null) {
+                    // Etat inconnu (sonde en cours) : neutre, surtout PAS "hors
+                    // ligne" — la lecture locale n'attend jamais cette sonde.
+                    pulse.title = 'Resonance du serveur : source en veille, sondage en cours...';
+                } else {
+                    pulse.title = netStatus.server === false
+                        ? 'Resonance du serveur : ondes eteintes, serveur injoignable'
+                        : 'Resonance du serveur : ondes eteintes, le serveur n\u2019a pas Internet (lecture locale OK)';
+                }
             }
             // Retour de la connexion pendant la vue en ligne : recharger les tendances
             if (wasOnline === false && netStatus.online && currentView === 'online') {
                 loadTrendingOnline();
             }
         }
+
+        // =============================================================
+        // RESONANCE DU SERVEUR — indicateur de connexion original, inspire
+        // du nom de l'app : une source ponctuelle d'ou se propagent des
+        // ondes concentriques. Ondes dorees regulieres = le serveur a
+        // Internet ; ambre qui vacille = catalogue en ligne limite ; grise
+        // lente = sondage en cours ; rouge qui se replie vers la source =
+        // connexion perdue — la bibliotheque locale, elle, continue de
+        // jouer sans attendre cette sonde.
+        // =============================================================
+        let pulsePhase = 0, pulseLastT = 0, pulsePrevT = 0;
+
+        function drawServerPulse(t) {
+            const pulse = document.getElementById('server-pulse');
+            if (!pulse) return;
+            const dpr = window.devicePixelRatio || 1;
+            const w = Math.max(1, Math.round(pulse.clientWidth * dpr));
+            const h = Math.max(1, Math.round(pulse.clientHeight * dpr));
+            if (pulse.width !== w || pulse.height !== h) { pulse.width = w; pulse.height = h; }
+            const c = pulse.getContext('2d');
+            if (!c) return;
+            c.clearRect(0, 0, w, h);
+            const dt = Math.min(100, t - (pulsePrevT || t));
+            pulsePrevT = t;
+            const s = netStatus;
+            // couleur, vitesse de propagation, vacillement, halo lumineux
+            let rgb, speed, wobble, glow, alphaMax;
+            if (s.online === true && (s.audius_ok || s.youtube_ok)) {
+                rgb = '212, 175, 55';  speed = 1;     wobble = 0;     glow = 1;    alphaMax = 0.85;  // or : resonance pleine
+            } else if (s.online === true) {
+                rgb = '245, 158, 11';  speed = 0.55;  wobble = 0.9;   glow = 0.4;  alphaMax = 0.75;  // ambre : onde perturbee
+            } else if (s.online === null) {
+                rgb = '168, 164, 156'; speed = 0.3;   wobble = 0.35;  glow = 0;    alphaMax = 0.55;  // gris : source en veille
+            } else {
+                rgb = '239, 68, 68';   speed = -0.5;  wobble = 0;     glow = 0;    alphaMax = 0.7;   // rouge : ondes qui se replient
+            }
+            const inward = speed < 0;
+            pulsePhase += 0.07 * Math.abs(speed) * dt;   // avance de la wavefront (px logiques)
+            const cx = 6 * dpr, cy = h / 2;
+            const minR = 2.5 * dpr;
+            const maxR = Math.max(minR + 6, w - 9 * dpr);
+            const cycle = maxR - minR;
+            c.lineCap = 'round';
+            for (let i = 0; i < 4; i++) {
+                const k = ((pulsePhase * dpr + i * cycle / 4) % cycle) / cycle;   // progres 0..1
+                let r, a;
+                if (inward) {
+                    r = maxR - k * cycle;                       // nait au bord du canvas
+                    a = 0.08 + (alphaMax - 0.15) * (1 - k);     // et meurt en rejoignant la source
+                } else {
+                    r = minR + k * cycle;                       // nait a la source
+                    a = alphaMax * (1 - 0.8 * k);               // s'amortit en se propageant
+                }
+                if (wobble) r += Math.sin(t * 0.006 + i * 2.4) * 1.7 * dpr * wobble;
+                c.strokeStyle = 'rgba(' + rgb + ', ' + Math.max(0.05, a).toFixed(3) + ')';
+                c.lineWidth = Math.max(1, (1.9 - 1.0 * k) * dpr);
+                c.shadowBlur = glow ? 6 * dpr * glow * (1 - k) : 0;
+                if (glow) c.shadowColor = 'rgba(' + rgb + ', 0.8)';
+                c.beginPath();
+                c.arc(cx, cy, r, -0.95, 0.95);   // arc oriente vers la droite : la source "emit"
+                c.stroke();
+            }
+            // la source : un point qui respire quand la resonance est vive,
+            // immobile et eteint quand les ondes se replient
+            const dotR = inward ? 2 * dpr : 2.3 * dpr + Math.sin(t * 0.005) * 0.8 * dpr;
+            c.shadowBlur = glow ? 7 * dpr : 0;
+            if (glow) c.shadowColor = 'rgba(' + rgb + ', 0.9)';
+            c.fillStyle = 'rgba(' + rgb + ', ' + (inward ? 0.5 : 0.95) + ')';
+            c.beginPath();
+            c.arc(cx, cy, Math.max(1.2, dotR), 0, 2 * Math.PI);
+            c.fill();
+            c.shadowBlur = 0;
+        }
+
+        function pulseFrame(t) {
+            requestAnimationFrame(pulseFrame);
+            if (t - pulseLastT < 33) return;   // ~30 images/s, meme sobriete que le visualiseur
+            pulseLastT = t;
+            drawServerPulse(t);
+        }
+        requestAnimationFrame(pulseFrame);
 
         async function refreshNetStatus() {
             try {

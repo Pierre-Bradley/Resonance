@@ -2,6 +2,7 @@ import re
 import os
 import json
 import time
+import hmac
 import shutil
 import tempfile
 import threading
@@ -116,6 +117,17 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS downloaded_files (
             path TEXT PRIMARY KEY
+        )
+    """)
+    # Statistiques d'ecoute (jalon 4.3) : une ligne par titre ecoute jusqu'au
+    # bout. Donnee petite et purement locale — elle ne quitte jamais le
+    # serveur. Alimente la vue "Les plus ecoutees" et les compteurs discrets
+    # de la bibliotheque.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS play_counts (
+            path TEXT PRIMARY KEY,
+            plays INTEGER NOT NULL DEFAULT 0,
+            last_played INTEGER
         )
     """)
     # Cache lyrics : les resultats negatifs ne sont gardes que 24h
@@ -476,6 +488,36 @@ def get_favorites():
     rows = cursor.fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+def get_play_counts():
+    """Comptes d'ecoute : {chemin relatif: {plays, last_played}}."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT path, plays, last_played FROM play_counts')
+    counts = {r[0]: {"plays": r[1], "last": r[2]} for r in cursor.fetchall()}
+    conn.close()
+    return counts
+
+
+def record_play_db(path):
+    """Incremente le compteur d'un titre (appele par le client quand un
+    morceau se termine). Retourne le nouveau compte, ou None si le chemin
+    ne designe pas un fichier musical du dossier."""
+    if not path or _safe_path(path) is None:
+        return None
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO play_counts (path, plays, last_played) VALUES (?, 1, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            plays = plays + 1, last_played = excluded.last_played
+    """, (path, int(time.time())))
+    cursor.execute('SELECT plays FROM play_counts WHERE path = ?', (path,))
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    return row[0] if row else None
 
 
 def toggle_favorite_db(path):
@@ -960,11 +1002,13 @@ def get_state():
     songs = get_all_songs(MUSIC_DIR)
     favorites = get_favorites()
     playlists = get_playlists()
-    # ETag : couvre bibliotheque + favoris + playlists. Le sondage de 5 s
-    # renvoie l'empreinte qu'il connait ; si rien n'a bouge, reponse 304
-    # vide (aucun JSON transfere) au lieu de retélécharger toute la bibliotheque.
+    play_counts = get_play_counts()
+    # ETag : couvre bibliotheque + favoris + playlists + compteurs d'ecoute.
+    # Le sondage de 5 s renvoie l'empreinte qu'il connait ; si rien n'a bouge,
+    # reponse 304 vide (aucun JSON transfere) au lieu de retélécharger toute
+    # la bibliotheque.
     etag_source = json.dumps({"songs": songs, "favorites": favorites,
-                              "playlists": playlists},
+                              "playlists": playlists, "play_counts": play_counts},
                              sort_keys=True, ensure_ascii=False)
     etag = hashlib.md5(etag_source.encode("utf-8", "replace")).hexdigest()
     if request.headers.get('If-None-Match') in (etag, f'"{etag}"'):
@@ -973,10 +1017,27 @@ def get_state():
         "songs": songs,
         "favorites": favorites,
         "playlists": playlists,
+        "play_counts": play_counts,
         "music_dir": MUSIC_DIR
     })
     response.set_etag(etag)
     return response
+
+
+@app.route('/api/play_count', methods=['POST'])
+def play_count():
+    """Statistiques d'ecoute (jalon 4.3) : le client signale chaque titre
+    termine ; le serveur incremente son compteur local."""
+    data = request.get_json(silent=True) or {}
+    path = data.get('path')
+    if not path or not isinstance(path, str):
+        return jsonify({"error": "Chemin manquant"}), 400
+    if not path.lower().endswith(('.mp3', '.wav', '.ogg', '.flac', '.m4a')):
+        return jsonify({"error": "Ce fichier n'est pas un titre de la bibliotheque"}), 404
+    plays = record_play_db(path)
+    if plays is None:
+        return jsonify({"error": "Titre introuvable"}), 404
+    return jsonify({"success": True, "path": path, "plays": plays})
 
 
 @app.route('/api/cover/<path:subpath>')
@@ -1057,6 +1118,7 @@ def delete_song():
         conn.execute("DELETE FROM favorites WHERE path = ?", (path,))
         conn.execute("DELETE FROM playlist_songs WHERE song_path = ?", (path,))
         conn.execute("DELETE FROM downloaded_files WHERE path = ?", (path,))
+        conn.execute("DELETE FROM play_counts WHERE path = ?", (path,))
         conn.commit()
         conn.close()
     except sqlite3.Error:
@@ -1299,11 +1361,17 @@ def search_online():
         return jsonify({"results": []})
     if _internet_known_down():
         return _offline_503()
+    # Pagination (scroll infini) : Audius gere limit/offset nativement.
+    try:
+        offset = max(0, min(int(request.args.get('offset', 0)), 1000))
+    except (TypeError, ValueError):
+        offset = 0
     try:
         host = get_audius_host()
         r = requests.get(
             f"{host}/v1/tracks/search",
-            params={'query': query, 'app_name': AUDIUS_APP_NAME, 'limit': 100},
+            params={'query': query, 'app_name': AUDIUS_APP_NAME,
+                    'limit': YT_SEARCH_PAGE, 'offset': offset},
             timeout=12
         )
         r.raise_for_status()
@@ -1317,10 +1385,15 @@ def trending_online():
     if _internet_known_down():
         return _offline_503()
     try:
+        offset = max(0, min(int(request.args.get('offset', 0)), 1000))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
         host = get_audius_host()
         r = requests.get(
             f"{host}/v1/tracks/trending",
-            params={'app_name': AUDIUS_APP_NAME, 'limit': 100},
+            params={'app_name': AUDIUS_APP_NAME,
+                    'limit': YT_SEARCH_PAGE, 'offset': offset},
             timeout=12
         )
         r.raise_for_status()
@@ -1604,6 +1677,15 @@ def _delete_replaced_file(replace_of, new_dest):
             os.remove(old)
         except OSError:
             pass
+    # Statistiques d'ecoute : l'ancien chemin n'existe plus, on purge son
+    # compteur pour ne pas garder de ligne orpheline.
+    try:
+        conn = get_db()
+        conn.execute("DELETE FROM play_counts WHERE path = ?", (replace_of,))
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        pass
 
 
 def _do_download_audius(job_id, track_id, title, artist, artwork_url, replace_of=''):
@@ -1738,6 +1820,7 @@ POT_BASE_URL = os.environ.get('POT_BASE_URL', '')
 POT_SERVER_HOME = (os.environ.get('YT_POT_SERVER_HOME')
                    or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pot-server'))
 YT_CACHE_TTL = 1800   # 30 min
+YT_SEARCH_PAGE = 40   # resultats par page de recherche (scroll infini)
 
 _yt_lock = threading.Lock()
 _yt_url_cache = {}      # video_id -> (url, expire_ts)
@@ -1862,17 +1945,26 @@ def search_youtube():
     if not YTDLP_AVAILABLE:
         return jsonify({"results": [], "error": "yt-dlp non installe : pip install yt-dlp"}), 500
     key = query.lower()
+    # Pagination (scroll infini) : 40 resultats par page, offset en parametre.
+    try:
+        offset = max(0, min(int(request.args.get('offset', 0)), 300))
+    except (TypeError, ValueError):
+        offset = 0
+    is_url = bool(re.match(r'^https?://', query))
     with _yt_lock:
         cached = _yt_search_cache.get(key)
         if cached and time.time() - cached[0] < YT_CACHE_TTL:
-            return jsonify({"results": cached[1]})
+            full = cached[1]
+            return jsonify({"results": full if is_url else full[offset:offset + YT_SEARCH_PAGE]})
     opts = _yt_base_opts()
     opts['extract_flat'] = True
     try:
         # Prefixe ytsearch explicite : default_search est ignore par certaines
         # versions de yt-dlp. Une URL collee dans la recherche est resolue
-        # directement comme une piste unique.
-        target = query if re.match(r'^https?://', query) else f'ytsearch{25}:{query}'
+        # directement comme une piste unique. Pour paginer, on redemande les
+        # offset+40 premiers resultats (yt-dlp ne gere pas d'offset natif) et
+        # on slice ensuite — le cache evite de refetcher les pages vues.
+        target = query if is_url else f'ytsearch{offset + YT_SEARCH_PAGE}:{query}'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(target, download=False)
         entries = info.get('entries') or []
@@ -1896,11 +1988,62 @@ def search_youtube():
             })
         with _yt_lock:
             _yt_search_cache[key] = (time.time(), results)
-        return jsonify({"results": results})
+        return jsonify({"results": results if is_url else results[offset:offset + YT_SEARCH_PAGE]})
     except yt_dlp.utils.DownloadError as e:
         return jsonify({"results": [], "error": _yt_error_message(e)}), 502
     except Exception as e:
         return jsonify({"results": [], "error": f"YouTube : {str(e)[:180]}"}), 502
+
+
+@app.route('/api/playlist_youtube')
+def playlist_youtube():
+    """Liste une playlist YouTube (jalon 4.6) pour l'import avec cases a
+    cocher : contrairement a la recherche, on garde les entrees sans duree
+    connue et on ne filtre pas les directs (l'UI decale la decision)."""
+    url = request.args.get('url', '').strip()
+    if not re.match(r'^https?://', url):
+        return jsonify({"error": "Adresse invalide"}), 400
+    m_list = re.search(r'[?&]list=([A-Za-z0-9_-]+)', url)
+    if not m_list:
+        return jsonify({"error": "Ce lien ne contient pas de playlist (parametre list= absent)."}), 400
+    # Une URL de video avec &list= pointe la playlist sous-jacente
+    pl_url = f'https://www.youtube.com/playlist?list={m_list.group(1)}'
+    if _internet_known_down():
+        return _offline_503()
+    if not YTDLP_AVAILABLE:
+        return jsonify({"error": "yt-dlp non installe : pip install yt-dlp"}), 500
+    with _yt_lock:
+        cached = _yt_search_cache.get('playlist:' + pl_url)
+        if cached and time.time() - cached[0] < YT_CACHE_TTL:
+            return jsonify(cached[1])
+    opts = _yt_base_opts()
+    opts['extract_flat'] = True
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(pl_url, download=False)
+        entries = list(info.get('entries') or [])
+        items, seen = [], set()
+        for e in entries:
+            vid = e.get('id') or ''
+            if not vid or vid in seen or e.get('is_live'):
+                continue
+            seen.add(vid)
+            duration = e.get('duration')
+            items.append({
+                'id': vid,
+                'title': e.get('title') or 'Sans titre',
+                'artist': e.get('channel') or e.get('uploader') or 'YouTube',
+                'duration': int(duration) if duration else 0,
+                'artwork': f'https://i.ytimg.com/vi/{vid}/mqdefault.jpg',
+            })
+        payload = {"title": info.get('title') or 'Playlist', "items": items}
+        with _yt_lock:
+            _yt_search_cache['playlist:' + pl_url] = (time.time(), payload)
+        return jsonify(payload)
+    except yt_dlp.utils.DownloadError as e:
+        return jsonify({"error": _yt_error_message(e)}), 502
+    except Exception as e:
+        return jsonify({"error": f"YouTube : {str(e)[:180]}"}), 502
 
 
 @app.route('/api/stream_youtube/<track_id>')
@@ -1961,9 +2104,10 @@ def stream_youtube(track_id):
     return Response(stream_with_context(relay()), status=upstream.status_code, headers=resp_headers)
 
 
-def _do_download_youtube(job_id, track_id, title, artist, artwork_url, replace_of=''):
+def _do_download_youtube(job_id, track_id, title, artist, artwork_url, replace_of='', quality='192'):
     """Travail de fond (tache 3.3) : yt-dlp avec hooks de progression,
-    conversion/tag ffmpeg en phase processing, statut done a la fin."""
+    conversion/tag ffmpeg en phase processing, statut done a la fin.
+    quality : debit mp3 vise en kbit/s (jalon 4.6) — ignore sans ffmpeg."""
     if not YTDLP_AVAILABLE:
         raise _YtError("yt-dlp non installe : pip install yt-dlp", 500)
     ffmpeg = shutil.which('ffmpeg')
@@ -1995,7 +2139,8 @@ def _do_download_youtube(job_id, track_id, title, artist, artwork_url, replace_o
     })
     if ffmpeg:
         opts['postprocessors'] = [
-            {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'},
+            {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3',
+             'preferredquality': str(quality or '192')},
             {'key': 'FFmpegMetadata'},
         ]
     try:
@@ -2045,6 +2190,13 @@ def download_youtube():
     artist = (data.get('artist') or 'YouTube').strip()
     artwork_url = data.get('artwork') or f'https://i.ytimg.com/vi/{track_id}/hqdefault.jpg'
     replace_of = (data.get('replace_of') or '').strip()
+    # Qualite mp3 visee (jalon 4.6) : 128 = economie, 192 = defaut, 320 = fidelite
+    try:
+        quality = str(int(data.get('quality') or 192))
+    except (TypeError, ValueError):
+        quality = '192'
+    if quality not in ('128', '192', '320'):
+        quality = '192'
     if not re.match(r'^[A-Za-z0-9_-]{6,20}$', track_id):
         return jsonify({"success": False, "error": "ID invalide"}), 400
 
@@ -2052,8 +2204,203 @@ def download_youtube():
     if created:
         DOWNLOAD_POOL.submit(_run_download_job, job['id'],
                              _do_download_youtube, track_id, title, artist,
-                             artwork_url, replace_of)
+                             artwork_url, replace_of, quality)
     return jsonify({"success": True, "job_id": job['id'], "title": title})
+
+# =============================================================================
+# SAUVEGARDE / RESTAURATION (jalon 4.7) : favoris, playlists et statistiques
+# d'ecoute exportes en JSON — restaurables sur un autre serveur sans toucher
+# au dossier de musique.
+# =============================================================================
+
+@app.route('/api/backup')
+def backup_data():
+    """Export complet (hors fichiers audio) au format JSON."""
+    return jsonify({
+        "app": "RESONANCE",
+        "format": 1,
+        "exported": int(time.time()),
+        "music_dir": MUSIC_DIR,
+        "favorites": get_favorites(),
+        "playlists": get_playlists(),
+        "play_counts": get_play_counts(),
+    })
+
+
+@app.route('/api/restore', methods=['POST'])
+def restore_data():
+    """Import d'une sauvegarde exportee par /api/backup : remplace favoris,
+    playlists et compteurs (le dossier de musique n'est pas modifie)."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get('app') != 'RESONANCE':
+        return jsonify({"success": False,
+                        "error": "Ce fichier n'est pas une sauvegarde RESONANCE."}), 400
+    favorites = data.get('favorites', [])
+    playlists = data.get('playlists', {})
+    play_counts = data.get('play_counts', {})
+    if not isinstance(favorites, list) or not all(isinstance(x, str) for x in favorites):
+        return jsonify({"success": False, "error": "Favoris illisibles."}), 400
+    if not isinstance(playlists, dict):
+        return jsonify({"success": False, "error": "Playlists illisibles."}), 400
+    for name, songs in playlists.items():
+        if not isinstance(name, str) or not isinstance(songs, list) \
+                or not all(isinstance(x, str) for x in songs):
+            return jsonify({"success": False, "error": "Playlists illisibles."}), 400
+    if not isinstance(play_counts, dict):
+        return jsonify({"success": False, "error": "Statistiques illisibles."}), 400
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        cur.execute("DELETE FROM favorites")
+        cur.execute("DELETE FROM playlist_songs")
+        cur.execute("DELETE FROM playlists")
+        cur.execute("DELETE FROM play_counts")
+        for path in favorites:
+            cur.execute("INSERT OR IGNORE INTO favorites (path) VALUES (?)", (path,))
+        for name, songs in playlists.items():
+            cur.execute("INSERT OR IGNORE INTO playlists (name) VALUES (?)", (name,))
+            for path in songs:
+                cur.execute("INSERT OR IGNORE INTO playlist_songs (playlist_name, song_path) "
+                            "VALUES (?, ?)", (name, path))
+        for path, c in play_counts.items():
+            if not isinstance(path, str):
+                continue
+            plays = c.get('plays') if isinstance(c, dict) else c
+            last = c.get('last') if isinstance(c, dict) else None
+            try:
+                plays = max(0, int(plays or 0))
+                last = int(last) if last else None
+            except (TypeError, ValueError):
+                plays, last = 0, None
+            if plays > 0:
+                cur.execute("INSERT OR REPLACE INTO play_counts (path, plays, last_played) "
+                            "VALUES (?, ?, ?)", (path, plays, last))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({"success": False, "error": f"Base indisponible : {e}"}), 500
+    conn.close()
+    return jsonify({"success": True,
+                    "favorites": len(favorites),
+                    "playlists": len(playlists),
+                    "play_counts": len(play_counts)})
+
+
+# =============================================================================
+# ACCES PROTEGE PAR CODE (jalon 4.7) : variable d'environnement
+# RESONANCE_ACCESS_CODE. Sans elle, comportement habituel (reseau local
+# confiance). Avec elle, tout l'application exige un cookie de deverrouillage
+# obtenu en saisissant le code — utile si le serveur devient joignable depuis
+# l'exterieur : sans protection, n'importe qui sur le reseau peut telecharger
+# ou modifier la bibliotheque.
+# =============================================================================
+
+ACCESS_CODE = os.environ.get('RESONANCE_ACCESS_CODE', '').strip()
+UNLOCK_COOKIE = 'resonance_unlock'
+
+
+def _unlock_token():
+    # Derive deterministe du code : changer le code invalide les sessions.
+    return hmac.new(ACCESS_CODE.encode('utf-8'), b'resonance-unlock-v1',
+                    hashlib.sha256).hexdigest()
+
+
+@app.route('/api/unlock', methods=['POST'])
+def unlock():
+    code = ''
+    if request.is_json:
+        code = str((request.json or {}).get('code') or '')
+    else:
+        code = str(request.form.get('code') or '')
+    if not ACCESS_CODE:
+        return jsonify({"success": True, "unlocked": True})
+    if not code or not hmac.compare_digest(code, ACCESS_CODE):
+        time.sleep(0.8)   # freine les essais a la chaine
+        return jsonify({"success": False, "error": "Code incorrect."}), 403
+    resp = jsonify({"success": True, "unlocked": True})
+    resp.set_cookie(UNLOCK_COOKIE, _unlock_token(),
+                    max_age=30 * 24 * 3600, httponly=True, samesite='Lax')
+    return resp
+
+
+@app.route('/api/is_locked')
+def is_locked():
+    return jsonify({"locked": bool(ACCESS_CODE)})
+
+
+UNLOCK_PAGE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RESONANCE — acces protege</title>
+<style>
+body { margin:0; min-height:100dvh; display:flex; align-items:center; justify-content:center;
+       background:#0a0e1a; color:#e8e6e1; font-family:system-ui, sans-serif; }
+.card { width:min(92vw, 360px); padding:38px 32px; border-radius:22px;
+        background:rgba(255,255,255,.05); border:1px solid rgba(212,175,55,.35);
+        text-align:center; backdrop-filter:blur(14px); }
+h1 { margin:0 0 6px; font-size:1.5rem; letter-spacing:3px; color:#d4af37; }
+p { color:#a8a49c; margin:0 0 22px; font-size:.9rem; }
+input { width:100%; box-sizing:border-box; padding:13px 16px; border-radius:12px;
+        border:1px solid rgba(212,175,55,.35); background:rgba(0,0,0,.35);
+        color:#e8e6e1; font-size:1.05rem; text-align:center; outline:none; }
+input:focus { border-color:#d4af37; }
+button { margin-top:14px; width:100%; padding:13px; border:0; border-radius:12px;
+         background:linear-gradient(135deg,#c9a227,#e8c765); color:#1a1508;
+         font-size:1rem; font-weight:600; cursor:pointer; }
+.err { color:#ef4444; font-size:.85rem; margin-top:10px; min-height:1.2em; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>RESONANCE</h1>
+  <p>Ce serveur est protege par un code personnel.</p>
+  <form id="f" onsubmit="return go(event)">
+    <input id="code" type="password" placeholder="Code d'acces" autofocus autocomplete="current-password">
+    <button type="submit">Deverrouiller</button>
+    <div class="err" id="err"></div>
+  </form>
+</div>
+<script>
+async function go(e) {
+  e.preventDefault();
+  document.getElementById('err').textContent = '';
+  try {
+    const res = await fetch('/api/unlock', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ code: document.getElementById('code').value })
+    });
+    if (res.ok) { window.location.replace('/'); return false; }
+    document.getElementById('err').textContent = (await res.json().catch(() => ({}))).error || 'Code incorrect.';
+  } catch (err) {
+    document.getElementById('err').textContent = 'Serveur injoignable.';
+  }
+  return false;
+}
+</script>
+</body>
+</html>"""
+
+
+@app.before_request
+def _access_gate():
+    if not ACCESS_CODE:
+        return None
+    if request.path in ('/api/unlock', '/api/is_locked'):
+        return None
+    token = request.cookies.get(UNLOCK_COOKIE)
+    if token and hmac.compare_digest(token, _unlock_token()):
+        return None
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Acces protege : deverrouillez avec votre code.",
+                        "locked": True}), 401
+    return Response(UNLOCK_PAGE, mimetype='text/html')
+
 
 # =============================================================================
 # LANCEMENT
